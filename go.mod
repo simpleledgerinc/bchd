@@ -21,6 +21,7 @@ require (
 	github.com/jessevdk/go-flags v0.0.0-20181221193153-c0795c8afcf4
 	github.com/jrick/logrotate v1.0.0
 	github.com/simpleledgerinc/goslp v0.0.0-20201014183713-88ba2ceaf1b1
+	github.com/xeipuuv/gojsonschema v1.2.0
 	github.com/zquestz/grab v0.0.0-20190224022517-abcee96e61b1
 	golang.org/x/crypto v0.0.0-20201016220609-9e8e0b390897
 	golang.org/x/net v0.0.0-20201022231255-08b38378de70

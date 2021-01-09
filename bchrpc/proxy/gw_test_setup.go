@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/golang/glog"
+	"github.com/xeipuuv/gojsonschema"
 	"io/ioutil"
 	"net/http"
 	"net/http/cookiejar"
@@ -135,6 +136,26 @@ func isFlagPresent(name string) bool {
 		}
 	})
 	return found
+}
+
+func validateJsonSchema(apiMmethod string, res []byte) error {
+	schemaLoader := gojsonschema.NewReferenceLoader(fmt.Sprintf("file://./test/schema/%s.json", apiMmethod))
+	documentLoader := gojsonschema.NewBytesLoader(res)
+
+	result, err := gojsonschema.Validate(schemaLoader, documentLoader)
+	if err != nil {
+		return err
+	}
+
+	if result.Valid() {
+		return nil
+	}
+	errMsg := "The document is not valid. see errors :\n"
+	fmt.Printf("")
+	for _, desc := range result.Errors() {
+		errMsg += fmt.Sprintf("- %s\n", desc)
+	}
+	return errors.New(errMsg)
 }
 
 func base64ToHex(base64Str string) (string, error) {

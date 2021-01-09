@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"github.com/gcash/bchd/bchrpc/pb"
@@ -48,7 +49,7 @@ func TestMain(m *testing.M) {
 		server: nil,
 	}
 	go startLocalTestServer(proxy)
-	time.Sleep(2 * time.Second) // wait for HTTP server goroutine
+	time.Sleep(1 * time.Second) // wait for HTTP server goroutine
 	httpClient, err = newHttpClient(fmt.Sprintf("http://localhost:%s/v1/", *proxyPort), logRequestJson)
 	if err != nil {
 		log.Printf("Error creating HTTP client: %+v", err)
@@ -67,15 +68,28 @@ func TestMain(m *testing.M) {
 func TestGetBlockchainInfo(t *testing.T) {
 	method := "GetBlockchainInfo"
 	minBlockHeight := 668619 // to ensure our node returns expected data on other API calls
-	res, err := httpClient.RequestMap(method, D{})
+	//res, err := httpClient.RequestMap(method, D{})
+	res, err := httpClient.RequestRaw(method, D{})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
-	} else if int(res["best_height"].(float64)) < minBlockHeight {
+	}
+
+	var resMap D
+	err = json.Unmarshal(res, &resMap)
+	if err != nil {
+		t.Fatalf("error unmarshalling %s API data %+v", method, err)
+	}
+	if int(resMap["best_height"].(float64)) < minBlockHeight {
 		// strange that best_height is float64 when marshalling to interface{}. better marshall to proto structs to get expected types
 		// we marshall to pb structs in other tests. But keep 1 check with map to ensure our JSON uses snake case property names
-		t.Fatalf("Your node is not fully synced. Some requests will likely return incorrect data. Best height %.0f, required height %d", res["best_height"].(float64), minBlockHeight)
+		t.Fatalf("Your node is not fully synced. Some requests will likely return incorrect data. Best height %.0f, required height %d", resMap["best_height"].(float64), minBlockHeight)
 	}
-	t.Logf("Successfully passed %s test - best block height %.0f", method, res["best_height"].(float64))
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
+	}
+
+	t.Logf("Successfully passed %s test - best block height %.0f", method, resMap["best_height"].(float64))
 }
 
 func TestResponseHeaders(t *testing.T) {
@@ -127,6 +141,43 @@ func TestRequestInvalid(t *testing.T) {
 	t.Logf("Successfully tested %s - received %+v", method, err)
 }
 
+func TestGetTransaction(t *testing.T) {
+	method := "GetTransaction"
+	txHash, _ := hex.DecodeString("15388bfd9998429b2955700da25d22178658cee8a9037423793a94efc047fbed")
+	txHashBase64 := base64.StdEncoding.EncodeToString(reverseBytes(txHash))
+	tokenID := "7278363093d3b899e0e1286ff681bf50d7ddc3c2a68565df743d0efc54c0e7fd"
+	tokenIdBytes, _ := hex.DecodeString(tokenID)
+
+	res, err := httpClient.RequestRaw(method, D{
+		"hash":                   txHashBase64,
+		"include_token_metadata": true,
+	})
+	if err != nil {
+		t.Fatalf("%s failed. Response: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
+	}
+
+	var tx pb.GetTransactionResponse
+	marshaller := runtime.JSONPb{}
+	err = marshaller.Unmarshal(res, &tx)
+	if err != nil {
+		t.Fatalf("Error unmarshalling %s response: %+v", method, err)
+	} else if len(tx.Transaction.Inputs) != 2 {
+		t.Fatalf("Expected 2 inputs on %s, got %d", method, len(tx.Transaction.Inputs))
+	} else if len(tx.Transaction.Outputs) != 4 {
+		t.Fatalf("Expected 4 outputs on %s, got %d", method, len(tx.Transaction.Outputs))
+	} else if tx.TokenMetadata == nil {
+		t.Fatalf("Missing token metadata on %s", method)
+	} else if !bytes.Equal(tokenIdBytes, tx.TokenMetadata.TokenId) {
+		t.Fatalf("Wrong token ID on %s: %x", method, tx.TokenMetadata.TokenId)
+	}
+
+	t.Logf("Successfully tested %s", method)
+}
+
 func TestGetAddressUnspentOutputs(t *testing.T) {
 	method := "GetAddressUnspentOutputs"
 	address := "simpleledger:qzapwgc088xj9hf8pcsrzsey8j7svcqysyp9ygxmq8"
@@ -137,6 +188,10 @@ func TestGetAddressUnspentOutputs(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var outputs pb.GetAddressUnspentOutputsResponse
@@ -164,6 +219,34 @@ func TestGetAddressUnspentOutputs(t *testing.T) {
 	}
 }
 
+func TestGetCashAddressUnspentOutputs(t *testing.T) {
+	method := "GetAddressUnspentOutputs"
+	address := "bitcoincash:qz7j7805n9yjdccpz00gq7d70k3h3nef9yj0pwpelz"
+	res, err := httpClient.RequestRaw(method, D{
+		"address":                address,
+		"include_mempool":        false,
+		"include_token_metadata": false,
+	})
+	if err != nil {
+		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
+	}
+
+	var outputs pb.GetAddressUnspentOutputsResponse
+	marshaller := runtime.JSONPb{}
+	err = marshaller.Unmarshal(res, &outputs)
+	if err != nil {
+		t.Fatalf("Error unmarshalling %s response: %+v", method, err)
+	} else if len(outputs.Outputs) < 1 {
+		t.Fatalf("%s has no outputs for address %s", method, address)
+	}
+
+	t.Logf("Successfully passed %s test. Got %d ouputs", method, len(outputs.Outputs))
+}
+
 func TestGetAddressUnspentOutputsEmpty(t *testing.T) {
 	method := "GetAddressUnspentOutputs"
 	address := "simpleledger:qpfdgdftjj43f9fhzm2k4ysrcuwlae2l3vd4pvmhy7"
@@ -174,6 +257,10 @@ func TestGetAddressUnspentOutputsEmpty(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var outputs pb.GetAddressUnspentOutputsResponse
@@ -202,6 +289,10 @@ func TestGetTokenBalance(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var outputs pb.GetAddressUnspentOutputsResponse
@@ -243,6 +334,10 @@ func TestGetTokenMetadata(t *testing.T) {
 		t.Fatalf("%s test failed: %+v", method, err)
 	}
 
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
+	}
+
 	var meta pb.GetTokenMetadataResponse
 	marshaller := runtime.JSONPb{}
 	err = marshaller.Unmarshal(res, &meta)
@@ -272,6 +367,10 @@ func TestCheckSlpTransaction(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var txRes pb.CheckSlpTransactionResponse
@@ -313,6 +412,10 @@ func TestCheckSlpTransactionBurnAllowed(t *testing.T) {
 		t.Fatalf("%s test failed: %+v", method, err)
 	}
 
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
+	}
+
 	var txRes pb.CheckSlpTransactionResponse
 	marshaller := runtime.JSONPb{}
 	err = marshaller.Unmarshal(res, &txRes)
@@ -336,6 +439,10 @@ func TestGetBip44HdAddress(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var address pb.GetBip44HdAddressResponse
@@ -363,6 +470,10 @@ func TestGetParsedSlpScript(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var script pb.GetParsedSlpScriptResponse
@@ -400,6 +511,10 @@ func TestGetTrustedSlpValidation(t *testing.T) {
 
 	if err != nil {
 		t.Fatalf("%s test failed: %+v", method, err)
+	}
+
+	if err := validateJsonSchema(method, res); err != nil {
+		t.Fatalf("Error validating %s JSON schema: %+v", method, err)
 	}
 
 	var validation pb.GetTrustedSlpValidationResponse

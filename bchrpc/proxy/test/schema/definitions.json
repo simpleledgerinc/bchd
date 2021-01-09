@@ -1,7 +1,10 @@
 {
   "definitions": {
     "pbTokenMetadata": {
-      "type": ["object", "null"],
+      "type": [
+        "object",
+        "null"
+      ],
       "required": [
         "token_id",
         "token_type"
@@ -45,7 +48,13 @@
     },
     "pbTokenMetadataNFT1Child": {
       "type": "object",
-      "required": ["token_ticker", "token_name", "token_document_url", "token_document_hash", "group_id"],
+      "required": [
+        "token_ticker",
+        "token_name",
+        "token_document_url",
+        "token_document_hash",
+        "group_id"
+      ],
       "properties": {
         "token_ticker": {
           "type": "string",
@@ -79,7 +88,15 @@
     },
     "pbTokenMetadataNFT1Group": {
       "type": "object",
-      "required": ["token_ticker", "token_name", "token_document_url", "token_document_hash", "decimals", "mint_baton_txid", "mint_baton_vout"],
+      "required": [
+        "token_ticker",
+        "token_name",
+        "token_document_url",
+        "token_document_hash",
+        "decimals",
+        "mint_baton_txid",
+        "mint_baton_vout"
+      ],
       "properties": {
         "token_ticker": {
           "type": "string",
@@ -120,7 +137,15 @@
     },
     "pbTokenMetadataTokenType1": {
       "type": "object",
-      "required": ["token_ticker", "token_name", "token_document_url", "token_document_hash", "decimals", "mint_baton_txid", "mint_baton_vout"],
+      "required": [
+        "token_ticker",
+        "token_name",
+        "token_document_url",
+        "token_document_hash",
+        "decimals",
+        "mint_baton_txid",
+        "mint_baton_vout"
+      ],
       "properties": {
         "token_ticker": {
           "type": "string",
@@ -279,7 +304,13 @@
     },
     "pbSlpTransactionInfo": {
       "type": "object",
-      "required": ["slp_action" ,"validity_judgement", "parse_error", "token_id", "burn_flags"],
+      "required": [
+        "slp_action",
+        "validity_judgement",
+        "parse_error",
+        "token_id",
+        "burn_flags"
+      ],
       "oneOf": [
         {
           "required": [
@@ -350,7 +381,15 @@
         "object",
         "null"
       ],
-      "required": ["token_id", "amount", "is_mint_baton", "address", "decimals", "slp_action", "token_type"],
+      "required": [
+        "token_id",
+        "amount",
+        "is_mint_baton",
+        "address",
+        "decimals",
+        "slp_action",
+        "token_type"
+      ],
       "properties": {
         "token_id": {
           "type": "string",
@@ -413,7 +452,15 @@
     },
     "pbSlpV1GenesisMetadata": {
       "type": "object",
-      "required": ["name", "ticker", "document_url", "document_hash", "decimals", "mint_baton_vout", "mint_amount"],
+      "required": [
+        "name",
+        "ticker",
+        "document_url",
+        "document_hash",
+        "decimals",
+        "mint_baton_vout",
+        "mint_amount"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -454,7 +501,10 @@
     },
     "pbSlpV1MintMetadata": {
       "type": "object",
-      "required": ["mint_baton_vout", "mint_amount"],
+      "required": [
+        "mint_baton_vout",
+        "mint_amount"
+      ],
       "properties": {
         "mint_baton_vout": {
           "type": "integer",
@@ -469,7 +519,9 @@
     },
     "pbSlpV1SendMetadata": {
       "type": "object",
-      "required": ["amounts"],
+      "required": [
+        "amounts"
+      ],
       "properties": {
         "amounts": {
           "type": "array",
@@ -483,7 +535,16 @@
     },
     "TransactionInput": {
       "type": "object",
-      "required": ["index", "outpoint", "signature_script", "sequence", "value", "previous_script", "address", "slp_token"],
+      "required": [
+        "index",
+        "outpoint",
+        "signature_script",
+        "sequence",
+        "value",
+        "previous_script",
+        "address",
+        "slp_token"
+      ],
       "properties": {
         "index": {
           "type": "integer",
@@ -524,7 +585,14 @@
     },
     "pbSlpNft1ChildGenesisMetadata": {
       "type": "object",
-      "required": ["name", "ticker", "document_url", "document_hash", "decimals", "group_token_id"],
+      "required": [
+        "name",
+        "ticker",
+        "document_url",
+        "document_hash",
+        "decimals",
+        "group_token_id"
+      ],
       "properties": {
         "name": {
           "type": "string",
@@ -561,7 +629,10 @@
     },
     "InputOutpoint": {
       "type": "object",
-      "required": ["hash", "index"],
+      "required": [
+        "hash",
+        "index"
+      ],
       "properties": {
         "hash": {
           "type": "string",
@@ -577,7 +648,14 @@
     },
     "pbGetUnspentOutputResponse": {
       "type": "object",
-      "required": ["outpoint", "pubkey_script", "value", "is_coinbase", "block_height", "slp_token"],
+      "required": [
+        "outpoint",
+        "pubkey_script",
+        "value",
+        "is_coinbase",
+        "block_height",
+        "slp_token"
+      ],
       "properties": {
         "outpoint": {
           "$ref": "#/definitions/InputOutpoint",
@@ -680,7 +758,9 @@
     },
     "pbGetTrustedSlpValidationResponse": {
       "type": "object",
-      "required": ["results"],
+      "required": [
+        "results"
+      ],
       "properties": {
         "results": {
           "type": "array",
@@ -692,7 +772,15 @@
     },
     "GetTrustedSlpValidationResponseValidityResult": {
       "type": "object",
-      "required": ["prev_out_hash", "prev_out_vout", "token_id", "slp_action", "token_type", "v1_token_amount", "slp_txn_opreturn"],
+      "required": [
+        "prev_out_hash",
+        "prev_out_vout",
+        "token_id",
+        "slp_action",
+        "token_type",
+        "v1_token_amount",
+        "slp_txn_opreturn"
+      ],
       "properties": {
         "prev_out_hash": {
           "type": "string",
@@ -729,7 +817,9 @@
     },
     "pbSlpNft1ChildSendMetadata": {
       "type": "object",
-      "required": ["group_token_id"],
+      "required": [
+        "group_token_id"
+      ],
       "properties": {
         "group_token_id": {
           "type": "string",

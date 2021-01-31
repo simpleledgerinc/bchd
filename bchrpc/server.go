@@ -1765,10 +1765,10 @@ func (s *GrpcServer) getSlpIndexEntryAndCheckBurnOtherToken(outpoint wire.OutPoi
 
 	// exit early if the outpoint is not an slp outpoint, or is a zero output slp
 	amt, isBaton := inputSlpMsg.GetVoutValue(int(outpoint.Index))
-	if amt == nil && isBaton == false {
-		return nil, nil
-	} else if isBaton == false {
-		if amt != nil && amt.Cmp(new(big.Int).SetUint64(0)) == 0 {
+	if !isBaton {
+		if amt == nil {
+			return nil, nil
+		} else if amt.Cmp(new(big.Int).SetUint64(0)) == 0 {
 			return nil, nil
 		}
 	}
@@ -2958,6 +2958,7 @@ func marshalBlockInfo(block *bchutil.Block, confirmations int32, medianTime time
 
 func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.BlockHeader, blockHeight int32, s *GrpcServer) *pb.Transaction {
 	var (
+		txid        = tx.Hash()
 		slpMsg      v1parser.ParseResult
 		params      = s.chainParams
 		slpInfo     = &pb.SlpTransactionInfo{ValidityJudgement: pb.SlpTransactionInfo_UNKNOWN_OR_INVALID}
@@ -2979,7 +2980,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 		} else {
 			tokenID, err := goslp.GetSlpTokenID(tx.MsgTx())
 			if err != nil {
-				log.Criticalf("failed to parse token ID for transaction %v", tx.Hash())
+				log.Criticalf("failed to parse token ID for transaction %v", txid)
 			}
 			slpInfo.TokenId = tokenID
 
@@ -3079,9 +3080,9 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 	// check slp validity
 	if s.slpIndex != nil {
 		err := s.db.View(func(dbTx database.Tx) error {
-			entry, err := s.slpIndex.GetSlpIndexEntry(dbTx, tx.Hash())
+			entry, err := s.slpIndex.GetSlpIndexEntry(dbTx, txid)
 			if err != nil {
-				return errors.New("slp tx does not exist")
+				return fmt.Errorf("slp entry does not exist for %v", txid)
 			}
 			slpInfo.ValidityJudgement = pb.SlpTransactionInfo_VALID
 
@@ -3089,17 +3090,20 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 			if entry.SlpVersionType == v1parser.TokenTypeNft1Child41 {
 				tm, err := s.slpIndex.GetTokenMetadata(dbTx, entry)
 				if err != nil {
-					msg := fmt.Sprintf("missing group token metadata for %v got '%s', %v", tx.Hash(), hex.EncodeToString(tm.MintBatonHash[:]), err)
+					msg := fmt.Sprintf("missing group id metadata for nft child txid %v, tokenId: %v, tokenIdHash: %v, %v", txid, entry.TokenID, hex.EncodeToString(entry.TokenIDHash[:]), err)
 					log.Critical(msg)
 					return errors.New(msg)
 				}
 				if tm.NftGroupID != nil {
 					if t, ok := slpInfo.TxMetadata.(*pb.SlpTransactionInfo_Nft1ChildGenesis); ok {
 						t.Nft1ChildGenesis.GroupTokenId = tm.NftGroupID[:]
-					}
-					if t, ok := slpInfo.TxMetadata.(*pb.SlpTransactionInfo_Nft1ChildSend); ok {
+					} else if t, ok := slpInfo.TxMetadata.(*pb.SlpTransactionInfo_Nft1ChildSend); ok {
 						t.Nft1ChildSend.GroupTokenId = tm.NftGroupID[:]
+					} else {
+						log.Criticalf("slpInfo has wrong TxMetadata type for nft child %v", txid)
 					}
+				} else {
+					log.Criticalf("missing group id in token metadata for nft child %v", txid)
 				}
 			}
 
@@ -3111,7 +3115,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 	}
 
 	respTx := &pb.Transaction{
-		Hash:               tx.Hash().CloneBytes(),
+		Hash:               txid.CloneBytes(),
 		Confirmations:      confirmations,
 		Version:            tx.MsgTx().Version,
 		Size:               int32(tx.MsgTx().SerializeSize()),
@@ -3146,8 +3150,10 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 		}
 		respTx.Inputs = append(respTx.Inputs, in)
 
-		// loop through SLP inputs to set some SLP txn info BURN_FLAGS
-		if inputToken != nil {
+		// add burn labels for destroyed slp inputs caused by wrong tokenID or invalid slp message
+		//
+		// NOTE: We do not add burn labels to 0 value slp inputs.
+		if inputToken != nil && (inputToken.Amount > 0 || inputToken.IsMintBaton) {
 			if slpInfo.ValidityJudgement == pb.SlpTransactionInfo_VALID {
 				if !bytes.Equal(slpInfo.TokenId, inputToken.TokenId) || uint32(slpMsg.TokenType()) != inputToken.TokenType {
 					burnFlagSet[pb.SlpTransactionInfo_BURNED_INPUTS_OTHER_TOKEN] = struct{}{}
@@ -3165,7 +3171,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 
 		outputToken, err := s.getSlpToken(tx.Hash(), uint32(i), output.PkScript)
 		if err != nil {
-			log.Debugf("no token stored for %v index: %v", tx.Hash(), uint32(i))
+			log.Debugf("no token stored for %v index: %v", txid, uint32(i))
 		}
 
 		out := &pb.Transaction_Output{
@@ -3192,7 +3198,10 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 		respTx.Outputs = append(respTx.Outputs, out)
 	}
 
-	// check for slp burns caused by missing vouts or inputs > outputs
+	// label slp burns caused by missing bch outputs, or input amt > output amt
+	//
+	// NOTE: For the sake of simplicity, the BURNED_OUTPUTS_MISSING_BCH_VOUT flag will be set even
+	// when the slp output burned is a 0 token amount.
 	if s.slpIndex != nil {
 		if slpInfo.ValidityJudgement == pb.SlpTransactionInfo_VALID {
 			switch t := slpMsg.(type) {

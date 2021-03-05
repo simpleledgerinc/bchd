@@ -214,7 +214,7 @@ describe("slp gRPC API checks", () => {
     assert.ok(Buffer.from(tm.getTokenDocumentHash_asU8()).toString("hex") === tokenMetadata.hashHex);
     assert.ok(Buffer.from(resTx.getTokenMetadata()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
     assert.ok(tm.getMintBatonVout() === 2);
-    assert.ok(Buffer.from(tm.getMintBatonTxid_asU8()).reverse().toString("hex") === prevOutBch.txid);  // TODO: rename Txid tp Hash
+    assert.ok(Buffer.from(tm.getMintBatonHash_asU8()).reverse().toString("hex") === prevOutBch.txid);
 
     // check txn output slp transction info
     const info = resTx.getTransaction()!.getSlpTransactionInfo()!;

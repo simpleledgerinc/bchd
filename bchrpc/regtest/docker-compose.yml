@@ -1,17 +1,17 @@
 version: "3.8"
 services:
-  
+
   # a bchd full node for gs++ to connect to
   bchd1:
     image: "bchd"
     build:
-      dockerfile: "Dockerfile.bchd"
+      dockerfile: "./bchrpc/regtest/Dockerfile.bchd"
       context: "../.."
     depends_on: 
       - bchd2  # uses the bchd.sh script to delete the prev key/pair, otherwise we need to manually delete 
     volumes: 
-      - ./:/data       # stores self-generated rpc.bchd1.key & rpc.bchd1.cert here
-    entrypoint: [ "bchd", "--connect=bchd2", "--grpclisten=0.0.0.0", "--rpccert=/data/rpc.bchd1.cert", "--rpckey=/data/rpc.bchd1.key", "-C", "/data/bchd.conf" ]
+      - ./:/data       # stores self-generated rpc.bchd1.key & rpc.bchd1.cert here so we can use it with gRPC client
+    entrypoint: [ "/data/bchd-entrypoint.sh", "bchd1" ]
     expose:
       - "18444"        # bitcoin regtest network
     ports:
@@ -22,11 +22,11 @@ services:
   bchd2: 
     image: "bchd"
     build:
-      dockerfile: "Dockerfile.bchd"
+      dockerfile: "./bchrpc/regtest/Dockerfile.bchd"
       context: "../.."
     volumes: 
       - ./:/data       # stores bchd.sh here
-    entrypoint: [ "/data/bchd-entrypoint.sh" ]
+    entrypoint: [ "/data/bchd-entrypoint.sh", "bchd2" ]
     expose:
       - "18444"        # bitcoin regtest network
     ports:

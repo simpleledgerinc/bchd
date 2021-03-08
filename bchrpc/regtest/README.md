@@ -2,13 +2,12 @@
 
 This setup allows for additional tests into bchd's continuous integration pipeline using regtest.  Docker compose is used to setup a regtest network with two bchd instances connected.
 
-## Running Tests
+## Run Tests
+
+Run the tests against the regtest network using:
 
 ```
-$ cd ./bchrpc/regtest
-$ docker-compose up -d
-$ npm i
-$ npm test
+$ ./test.sh
 ```
 
 When done run `docker-compose down` to remove the regtest network.

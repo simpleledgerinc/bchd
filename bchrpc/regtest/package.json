@@ -22,7 +22,6 @@
     "mocha": "^8.1.3",
     "mocha-steps": "^1.3.0",
     "patch-package": "^6.4.4",
-    "slp-light": "0.0.1",
     "slp-mdm": "0.0.6",
     "slp-validate": "^1.2.2",
     "synchronized-promise": "^0.3.1",

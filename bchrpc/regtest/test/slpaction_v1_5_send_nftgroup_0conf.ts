@@ -3,8 +3,7 @@ import * as assert from "assert";
 import { GetAddressUnspentOutputsResponse, GetBlockchainInfoResponse, GrpcClient, SlpAction, SlpTransactionInfo } from "grpc-bchrpc-node";
 import { PrivateKey, Networks, Transaction, Script, Address } from "bitcore-lib-cash";
 import * as bchaddrjs from "bchaddrjs-slp";
-import { BitcoinRpcClient } from "../src/rpc";
-import { Big } from "big.js";
+import { BitcoinRpcClient } from "../lib/rpc";
 import * as mdm from "slp-mdm";
 
 // setup RPC clients (used primarily for generating blocks only)
@@ -48,7 +47,7 @@ const wallet3 = {
   pubKey: privKey3.toPublicKey()
 };
 
-describe("SlpAction: Genesis V1", () => {
+describe("SlpAction: Send V1 NFT1 Group (unconfirmed)", () => {
   step("bchd1 ready", async (): Promise<void> => {
     const info1 = await bchd1Grpc.getBlockchainInfo();
     assert.strictEqual(info1.getBitcoinNet(), GetBlockchainInfoResponse.BitcoinNet.REGTEST);
@@ -141,9 +140,10 @@ describe("SlpAction: Genesis V1", () => {
   });
 
   let tokenMetadata: { name: string, ticker: string, decimals: number, url: string, hashHex: string };
-  let prevOutSlp: { tokenId: string, txid: string, vout: number, amount: Big };
+  // let prevOutSlp: { tokenId: string, txid: string, vout: number, amount: Big };
+  let tokenIdHex: string;
 
-  step("SlpAction: SLP_V1_GENESIS (with baton)", async () => {
+  step("do genesis to create a baton", async () => {
 
     // using bitcore-lib to build a transaction
     const txn = new Transaction();
@@ -162,7 +162,7 @@ describe("SlpAction: Genesis V1", () => {
     // create genesis metadata output
     const genesisMintAmount = new mdm.BN(1337);
     tokenMetadata = { name: "type 1 test", ticker: "t1t", decimals: 9, url: "test.com", hashHex: "" };
-    const slpGenesisOpReturn = mdm.TokenType1.genesis(tokenMetadata.ticker, tokenMetadata.name, tokenMetadata.url, tokenMetadata.hashHex, tokenMetadata.decimals, 2, genesisMintAmount);
+    const slpGenesisOpReturn = mdm.NFT1.Group.genesis(tokenMetadata.ticker, tokenMetadata.name, tokenMetadata.url, tokenMetadata.hashHex, tokenMetadata.decimals, 2, genesisMintAmount);
     txn.addOutput(new Transaction.Output({
       script: slpGenesisOpReturn,
       satoshis: 0,
@@ -200,18 +200,19 @@ describe("SlpAction: Genesis V1", () => {
       vout: 3,
       satoshis: prevOutBch.satoshis - 546 * 2 - 500
     };
+    tokenIdHex = prevOutBch.txid;
 
     // do gRPC server data checks
     const resTx = await bchd1Grpc.getTransaction({ hash: prevOutBch.txid, reversedHashOrder: true, includeTokenMetadata: true });
 
     // check token metadata
-    const tm = resTx.getTokenMetadata()!.getType1()!;
+    const tm = resTx.getTokenMetadata()!.getNft1Group()!;
     assert.ok(Buffer.from(tm.getTokenName_asU8()).toString("utf-8") === tokenMetadata.name);
     assert.ok(Buffer.from(tm.getTokenTicker_asU8()).toString("utf-8") === tokenMetadata.ticker);
     assert.ok(Buffer.from(tm.getTokenDocumentUrl_asU8()).toString("utf-8") === tokenMetadata.url);
     assert.ok(tm.getDecimals() === tokenMetadata.decimals);
     assert.ok(Buffer.from(tm.getTokenDocumentHash_asU8()).toString("hex") === tokenMetadata.hashHex);
-    assert.ok(Buffer.from(resTx.getTokenMetadata()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
+    assert.ok(Buffer.from(resTx.getTokenMetadata()!.getTokenId_asU8()).toString("hex") === tokenIdHex);
     assert.ok(Buffer.from(tm.getMintBatonHash_asU8()).reverse().toString("hex") === prevOutBch.txid);
     assert.ok(tm.getMintBatonVout() === 2);
 
@@ -219,7 +220,7 @@ describe("SlpAction: Genesis V1", () => {
     const info = resTx.getTransaction()!.getSlpTransactionInfo()!;
     assert.ok(Buffer.from(info.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
     assert.ok(info.getValidityJudgement() === SlpTransactionInfo.ValidityJudgement.VALID);
-    assert.ok(info.getSlpAction() === SlpAction.SLP_V1_GENESIS);
+    assert.ok(info.getSlpAction() === SlpAction.SLP_NFT1_GROUP_GENESIS);
 
     // check txn output slp transction info -- i.e., the specific parsed OP_RETURN info
     const infoV1Genesis = info.getV1Genesis()!;
@@ -236,9 +237,12 @@ describe("SlpAction: Genesis V1", () => {
     assert.ok(outputs.filter(o => o.getSlpToken()).length === 2);
 
     // check token output
+    assert.ok(outputs[1].getSlpToken()!.getIsMintBaton() === false);
     assert.ok(outputs[1].getSlpToken()!.getAmount() === genesisMintAmount.toString());
     assert.ok(outputs[1].getSlpToken()!.getDecimals() === tokenMetadata.decimals);
     assert.ok(outputs[1].getSlpToken()!.getAddress() === wallet3.slpRegTestAddressNoPrefix);
+    assert.ok(outputs[1].getSlpToken()!.getTokenType() === 0x81);
+    assert.ok(outputs[1].getSlpToken()!.getSlpAction() === SlpAction.SLP_NFT1_GROUP_GENESIS);
     assert.ok(Buffer.from(outputs[1].getSlpToken()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
 
     // check mint baton output
@@ -246,14 +250,13 @@ describe("SlpAction: Genesis V1", () => {
     assert.ok(outputs[2].getSlpToken()!.getAmount() === "0");
     assert.ok(outputs[2].getSlpToken()!.getDecimals() === tokenMetadata.decimals);
     assert.ok(outputs[2].getSlpToken()!.getAddress() === wallet3.slpRegTestAddressNoPrefix);
+    assert.ok(outputs[2].getSlpToken()!.getTokenType() === 0x81);
+    assert.ok(outputs[2].getSlpToken()!.getSlpAction() === SlpAction.SLP_NFT1_GROUP_GENESIS);
     assert.ok(Buffer.from(outputs[2].getSlpToken()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
 
-    // store prevOutSlp for use in the next step
-    // TODO
   });
 
-
-  step("SlpAction: SLP_V1_GENESIS (without baton)", async () => {
+  step("SlpAction: SLP_NFT1_GROUP_SEND", async () => {
 
     // using bitcore-lib to build a transaction
     const txn = new Transaction();
@@ -269,22 +272,33 @@ describe("SlpAction: Genesis V1", () => {
       script: Script.empty()
     }));
 
+    // add the token input
+    txn.addInput(new Transaction.Input.PublicKeyHash({
+      output: new Transaction.Output({
+        script: Script.buildPublicKeyHashOut(new Address(wallet3.address)),
+        satoshis: 546
+      }),
+      prevTxId: Buffer.from(prevOutBch.txid, "hex"),
+      outputIndex: 1,
+      script: Script.empty()
+    }));
+
     // create genesis metadata output
-    const genesisMintAmount = new mdm.BN(1337);
-    tokenMetadata = { name: "type 1 test", ticker: "t1t", decimals: 9, url: "test.com", hashHex: "" };
-    const slpGenesisOpReturn = mdm.TokenType1.genesis(tokenMetadata.ticker, tokenMetadata.name, tokenMetadata.url, tokenMetadata.hashHex, tokenMetadata.decimals, null, genesisMintAmount);
+    const mintAmount = new mdm.BN(1337);
+    // tokenMetadata = { name: "type 1 test", ticker: "t1t", decimals: 9, url: "test.com", hashHex: "" };
+    const slpGenesisOpReturn = mdm.NFT1.Group.send(prevOutBch.txid, [mintAmount.minus(1), new mdm.BN(1)]);
     txn.addOutput(new Transaction.Output({
       script: slpGenesisOpReturn,
       satoshis: 0,
     }));
 
-    // create token output
+    // token output 1
     txn.addOutput(new Transaction.Output({
       script: new Script(new Address(wallet3.address)),
       satoshis: 546
     }));
 
-    // create mint baton output (this is a false mint baton so we can check for invalid validity)
+    // token output 2
     txn.addOutput(new Transaction.Output({
       script: new Script(new Address(wallet3.address)),
       satoshis: 546
@@ -297,7 +311,7 @@ describe("SlpAction: Genesis V1", () => {
     }));
 
     // sign
-    txn.sign(wallet2._privKey);
+    txn.sign([wallet2._privKey, wallet3._privKey]);
 
     // broadcast
     const txnHex = txn.serialize();
@@ -315,44 +329,60 @@ describe("SlpAction: Genesis V1", () => {
     const resTx = await bchd1Grpc.getTransaction({ hash: prevOutBch.txid, reversedHashOrder: true, includeTokenMetadata: true });
 
     // check token metadata
-    const tm = resTx.getTokenMetadata()!.getType1()!;
+    const tm = resTx.getTokenMetadata()!.getNft1Group()!;
     assert.ok(Buffer.from(tm.getTokenName_asU8()).toString("utf-8") === tokenMetadata.name);
     assert.ok(Buffer.from(tm.getTokenTicker_asU8()).toString("utf-8") === tokenMetadata.ticker);
     assert.ok(Buffer.from(tm.getTokenDocumentUrl_asU8()).toString("utf-8") === tokenMetadata.url);
     assert.ok(tm.getDecimals() === tokenMetadata.decimals);
     assert.ok(Buffer.from(tm.getTokenDocumentHash_asU8()).toString("hex") === tokenMetadata.hashHex);
-    assert.ok(Buffer.from(resTx.getTokenMetadata()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
-    assert.ok(tm.getMintBatonVout() === 0);
-    assert.ok(tm.getMintBatonHash_asU8().length === 0);
+    assert.ok(Buffer.from(resTx.getTokenMetadata()!.getTokenId_asU8()).toString("hex") === tokenIdHex);
+    assert.ok(tm.getMintBatonVout() === 2);
+    assert.ok(Buffer.from(tm.getMintBatonHash_asU8()).reverse().toString("hex") === tokenIdHex);
 
     // check txn output slp transction info (common)
     const info = resTx.getTransaction()!.getSlpTransactionInfo()!;
-    assert.ok(Buffer.from(info.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
+    assert.ok(Buffer.from(info.getTokenId_asU8()).toString("hex") === tokenIdHex);
     assert.ok(info.getValidityJudgement() === SlpTransactionInfo.ValidityJudgement.VALID);
-    assert.ok(info.getSlpAction() === SlpAction.SLP_V1_GENESIS);
+    assert.ok(info.getSlpAction() === SlpAction.SLP_NFT1_GROUP_SEND);
 
     // check txn output slp transction info -- i.e., the specific parsed OP_RETURN info
-    const infoV1Genesis = info.getV1Genesis()!;
-    assert.ok(Buffer.from(infoV1Genesis.getName_asU8()).toString("utf-8") === tokenMetadata.name);
-    assert.ok(Buffer.from(infoV1Genesis.getTicker_asU8()).toString("utf-8") === tokenMetadata.ticker);
-    assert.ok(Buffer.from(infoV1Genesis.getDocumentUrl_asU8()).toString("utf-8") === tokenMetadata.url);
-    assert.ok(infoV1Genesis.getDecimals() === tokenMetadata.decimals);
-    assert.ok(Buffer.from(infoV1Genesis.getDocumentHash_asU8()).toString("hex") === tokenMetadata.hashHex);
-    assert.ok(infoV1Genesis.getMintAmount() === genesisMintAmount.toString(10));
-    assert.ok(infoV1Genesis.getMintBatonVout() === 0);
+    const infoV1Send = info.getV1Send()!;
+    assert.ok(infoV1Send.getAmountsList().length === 2);
+    assert.ok(infoV1Send.getAmountsList()[0] === mintAmount.minus(1).toString());
+    assert.ok(infoV1Send.getAmountsList()[1] === "1");
 
-    // check individual slp token input/output values (for type 1 genesis we can skip all inputs)
+    // check individual slp token input/output values
+    const inputs = resTx.getTransaction()!.getInputsList()!;
+    assert.ok(inputs.filter(i => i.getSlpToken()).length === 1);
+
+    const inputToken = inputs[1].getSlpToken()!;
+    assert.ok(inputToken.getIsMintBaton() === false);
+    assert.ok(inputToken.getAmount() === mintAmount.toString());
+    assert.ok(inputToken.getDecimals() === tokenMetadata.decimals);
+    assert.ok(inputToken.getAddress() === wallet3.slpRegTestAddressNoPrefix);
+    assert.ok(inputToken.getTokenType() === 0x81);
+    assert.ok(inputToken.getSlpAction() === SlpAction.SLP_NFT1_GROUP_GENESIS);  // the slp action from previous txn
+    assert.ok(Buffer.from(inputToken.getTokenId_asU8()).toString("hex") === tokenIdHex);
+
     const outputs = resTx.getTransaction()!.getOutputsList()!;
-    assert.ok(outputs.filter(o => o.getSlpToken()).length === 1);
+    assert.ok(outputs.filter(o => o.getSlpToken()).length === 2);
 
-    // check token output
-    assert.ok(outputs[1].getSlpToken()!.getAmount() === genesisMintAmount.toString());
+    // check token send output 1
+    assert.ok(outputs[1].getSlpToken()!.getAmount() === mintAmount.minus(1).toString());
     assert.ok(outputs[1].getSlpToken()!.getDecimals() === tokenMetadata.decimals);
     assert.ok(outputs[1].getSlpToken()!.getAddress() === wallet3.slpRegTestAddressNoPrefix);
-    assert.ok(Buffer.from(outputs[1].getSlpToken()!.getTokenId_asU8()).toString("hex") === prevOutBch.txid);
+    assert.ok(outputs[1].getSlpToken()!.getTokenType() === 0x81);
+    assert.ok(outputs[1].getSlpToken()!.getSlpAction() === SlpAction.SLP_NFT1_GROUP_SEND);
+    assert.ok(Buffer.from(outputs[1].getSlpToken()!.getTokenId_asU8()).toString("hex") === tokenIdHex);
 
-    // store prevOutSlp for use in the next step
-    // TODO
+    // check token send output 2
+    assert.ok(outputs[2].getSlpToken()!.getAmount() === "1");
+    assert.ok(outputs[2].getSlpToken()!.getDecimals() === tokenMetadata.decimals);
+    assert.ok(outputs[2].getSlpToken()!.getAddress() === wallet3.slpRegTestAddressNoPrefix);
+    assert.ok(outputs[2].getSlpToken()!.getTokenType() === 0x81);
+    assert.ok(outputs[2].getSlpToken()!.getSlpAction() === SlpAction.SLP_NFT1_GROUP_SEND);
+    assert.ok(Buffer.from(outputs[2].getSlpToken()!.getTokenId_asU8()).toString("hex") === tokenIdHex);
+
   });
 
 });

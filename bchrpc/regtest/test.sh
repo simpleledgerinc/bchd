@@ -2,7 +2,7 @@
 
 echo "INFO: Cleaning up from previous runs..."
 docker-compose down
-docker rmi bchd
+docker rmi bchd_regtest
 rm -f ./rpc.bchd1.*
 
 echo "INFO: Creating bchd regtest network from source"
@@ -15,10 +15,9 @@ exit_code=$?
 
 echo "INFO: Cleaning up."
 docker-compose down
-docker rmi bchd
 rm -f ./rpc.bchd1.*
 
-if [ exit_code == "0" ]; then
+if [ $exit_code -eq 0 ]; then
   echo "INFO: All regtest network tests pass (code: $exit_code)"
 else
   echo "ERROR: One or more regtest network tests failed (code: $exit_code)"

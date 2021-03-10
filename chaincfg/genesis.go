@@ -170,3 +170,25 @@ var simNetGenesisBlock = wire.MsgBlock{
 	},
 	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
 }
+
+
+// Nextchain
+
+//var nexGenesisHash = *newHashFromStr("1e8f0f1c72f93020d83f64398b93de41bc034b14a614518c493b2aaf92893ea7")  // Reversed
+var nexGenesisHash = *newHashFromStr("a73e8992af2a3b498c5114a6144b03bc41de938b39643fd82030f9721c0f8f1e")
+
+
+var nexGenesisMerkleRoot = *newHashFromStr("0d42fc48a9d85bdcefcc6f0f00749279643b10c7f25786424dd01735ef3a7235")
+//var nexGenesisMerkleRoot = *newHashFromStr("35723aef3517d04d428657f2c7103b64799274000f6fccefdc5bd8a948fc420d")
+
+var nexGenesisBlock = wire.MsgBlock{
+	Header: wire.BlockHeader{
+		Version:    536870912,
+		PrevBlock:  chainhash.Hash{},         // 0000000000000000000000000000000000000000000000000000000000000000
+		MerkleRoot: nexGenesisMerkleRoot,
+		Timestamp:  time.Unix(1614891148, 0),
+		Bits:       0x1f000fff,
+		Nonce:      1774176,
+	},
+	Transactions: []*wire.MsgTx{&genesisCoinbaseTx},
+}

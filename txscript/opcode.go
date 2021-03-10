@@ -278,7 +278,7 @@ const (
 	OP_UNKNOWN235          = 0xeb // 235
 	OP_UNKNOWN236          = 0xec // 236
 	OP_UNKNOWN237          = 0xed // 237
-	OP_UNKNOWN238          = 0xee // 238
+	OP_GROUP               = 0xee // 238
 	OP_UNKNOWN239          = 0xef // 239
 	OP_UNKNOWN240          = 0xf0 // 240
 	OP_UNKNOWN241          = 0xf1 // 241
@@ -504,6 +504,9 @@ var opcodeArray = [256]opcode{
 	OP_CHECKDATASIG:        {OP_CHECKDATASIG, "OP_CHECKDATASIG", 1, opcodeCheckDataSig},
 	OP_CHECKDATASIGVERIFY:  {OP_CHECKDATASIGVERIFY, "OP_CHECKDATASIGVERIFY", 1, opcodeCheckDataSigVerify},
 
+        // Misc Opcodes.
+	OP_GROUP: {OP_GROUP, "OP_GROUP", 1, opcodeGroup},
+
 	// Reserved opcodes.
 	OP_NOP1:  {OP_NOP1, "OP_NOP1", 1, opcodeNop},
 	OP_NOP4:  {OP_NOP4, "OP_NOP4", 1, opcodeNop},
@@ -564,7 +567,6 @@ var opcodeArray = [256]opcode{
 	OP_UNKNOWN235: {OP_UNKNOWN235, "OP_UNKNOWN235", 1, opcodeInvalid},
 	OP_UNKNOWN236: {OP_UNKNOWN236, "OP_UNKNOWN236", 1, opcodeInvalid},
 	OP_UNKNOWN237: {OP_UNKNOWN237, "OP_UNKNOWN237", 1, opcodeInvalid},
-	OP_UNKNOWN238: {OP_UNKNOWN238, "OP_UNKNOWN238", 1, opcodeInvalid},
 	OP_UNKNOWN239: {OP_UNKNOWN239, "OP_UNKNOWN239", 1, opcodeInvalid},
 	OP_UNKNOWN240: {OP_UNKNOWN240, "OP_UNKNOWN240", 1, opcodeInvalid},
 	OP_UNKNOWN241: {OP_UNKNOWN241, "OP_UNKNOWN241", 1, opcodeInvalid},
@@ -2879,6 +2881,23 @@ func opcodeCheckDataSigVerify(op *parsedOpcode, vm *Engine) error {
 	}
 	return err
 }
+
+// opcodeGroup pops 2 items off of the stack (the Group semantics are
+// applied outside of the script interpreter)
+//
+// Stack transformation: [... x0 x1] -> [... ]
+func opcodeGroup(op *parsedOpcode, vm *Engine) error {
+	_, err := vm.dstack.PopByteArray()
+	if err != nil {
+		return err
+	}
+	_, err1 := vm.dstack.PopByteArray()
+	if err1 != nil {
+		return err
+	}
+	return nil
+}
+
 
 // OpcodeByName is a map that can be used to lookup an opcode by its
 // human-readable name (OP_CHECKMULTISIG, OP_CHECKSIG, etc).

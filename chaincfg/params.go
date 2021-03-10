@@ -26,6 +26,11 @@ var (
 	// have for the main network.  It is the value 2^224 - 1.
 	mainPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 224), bigOne)
 
+        // nexPowLimit is the highest (easiest) proof of work value a nex block can
+	// have. It is the value 2^236 - 1 or
+        // 0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+	nexPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 236), bigOne)
+
 	// regressionPowLimit is the highest proof of work value a Bitcoin block
 	// can have for the regression test network.  It is the value 2^255 - 1.
 	regressionPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 255), bigOne)
@@ -419,6 +424,95 @@ var MainNetParams = Params{
 	SlpIndexStartHash:   newHashFromStr("0000000000000000020322dc9d6da5bb55c4c12aa5040a7c4c2f673e28a5b9f0"),
 	SlpAddressPrefix:    "simpleledger",
 }
+
+// nexParams defines the network parameters for the nextchain experimental blockchain
+var NexParams = Params{
+	Name:        "nex",
+	Net:         wire.NexNet,
+	DefaultPort: "7228",
+	DNSSeeds: []DNSSeed{
+		{"seed.nextchain.cash", true},
+	},
+
+	// Chain parameters
+	GenesisBlock:  &nexGenesisBlock,
+	GenesisHash:   &nexGenesisHash,
+	PowLimit:      nexPowLimit,
+	PowLimitBits:  0x1f000fff,
+	BIP0034Height: 0, // 000000000000024b89b42a942fe0d9fea3bb44ab7bd1b19115dd6a759c0808b8
+	BIP0065Height: 0, // 000000000000000004c2b624ed5d7756c508d90fd0da2c7c679febfa6c4735f0
+	BIP0066Height: 0, // 00000000000000000379eaa19dce8c9b722d46ae6a57c2f1a988119488b50931
+
+	UahfForkHeight:              0,
+	DaaForkHeight:               0,
+	MagneticAnonomalyForkHeight: 0,
+	GreatWallForkHeight:         0,
+	GravitonForkHeight:          0,
+	PhononForkHeight:            0,
+	AxionActivationHeight:       0,
+
+	CoinbaseMaturity:                     100,
+	SubsidyReductionInterval:             210000,
+	TargetTimespan:                       time.Hour * 24 * 14, // 14 days
+	TargetTimePerBlock:                   time.Minute * 2,    // 2 minutes
+	RetargetAdjustmentFactor:             4,                   // 25% less, 400% more
+	ReduceMinDifficulty:                  false,
+	NoDifficultyAdjustment:               false,
+	MinDiffReductionTime:                 0,
+	AsertDifficultyHalflife:              2 * 24 * 3600, // 2 days in seconds
+	AsertDifficultyAnchorHeight:          0,
+	AsertDifficultyAnchorParentTimestamp: 1614891148,
+	AsertDifficultyAnchorBits:            0x1f000fff,
+	GenerateSupported:                    false,
+
+	// Checkpoints ordered from oldest to newest.
+	Checkpoints: []Checkpoint{
+	},
+
+	// Consensus rule change deployments.
+	//
+	// The miner confirmation window is defined as:
+	//   target proof of work timespan / target proof of work spacing
+	RuleChangeActivationThreshold: 1916, // 95% of MinerConfirmationWindow
+	MinerConfirmationWindow:       2016, //
+	Deployments: [DefinedDeployments]ConsensusDeployment{
+		DeploymentTestDummy: {
+			BitNumber:  28,
+			StartTime:  1199145601, // January 1, 2008 UTC
+			ExpireTime: 1230767999, // December 31, 2008 UTC
+		},
+		DeploymentCSV: {
+			BitNumber:  0,
+			StartTime:  1462060800, // May 1st, 2016
+			ExpireTime: 1493596800, // May 1st, 2017
+		},
+	},
+
+	// Mempool parameters
+	RelayNonStdTxs: false,
+
+	// The prefix for the cashaddress
+	CashAddressPrefix: "nex", // always bitcoincash for mainnet
+
+	// Address encoding magics
+	LegacyPubKeyHashAddrID: 0x00, // starts with 1
+	LegacyScriptHashAddrID: 0x05, // starts with 3
+	PrivateKeyID:           0x80, // starts with 5 (uncompressed) or K (compressed)
+
+	// BIP32 hierarchical deterministic extended key magics
+	HDPrivateKeyID: [4]byte{0x04, 0x88, 0xad, 0xe4}, // starts with xprv
+	HDPublicKeyID:  [4]byte{0x04, 0x88, 0xb2, 0x1e}, // starts with xpub
+
+	// BIP44 coin type used in the hierarchical deterministic path for
+	// address generation.
+	HDCoinType: 145,
+
+	// slp indexer parameters
+	SlpIndexStartHeight: 0,
+	SlpIndexStartHash:   newHashFromStr("a73e8992af2a3b498c5114a6144b03bc41de938b39643fd82030f9721c0f8f1e"),
+	SlpAddressPrefix:    "simpleledger",
+}
+
 
 // RegressionNetParams defines the network parameters for the regression test
 // Bitcoin network.  Not to be confused with the test Bitcoin network (version
@@ -823,4 +917,5 @@ func init() {
 	mustRegister(&TestNet3Params)
 	mustRegister(&RegressionNetParams)
 	mustRegister(&SimNetParams)
+        mustRegister(&NexParams)
 }

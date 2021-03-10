@@ -188,7 +188,7 @@ const (
 	// SimNet represents the simulation test network.
 	SimNet BitcoinNet = 0x12141c16
 
-        // Nextchain
+	// Nextchain
 	NexNet BitcoinNet = 0x21122772
 )
 
@@ -199,7 +199,7 @@ var bnStrings = map[BitcoinNet]string{
 	TestNet:  "TestNet",
 	TestNet3: "TestNet3",
 	SimNet:   "SimNet",
-        NexNet:   "NexNet",
+	NexNet:   "NexNet",
 }
 
 // String returns the BitcoinNet in human-readable form.

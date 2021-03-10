@@ -26,9 +26,9 @@ var (
 	// have for the main network.  It is the value 2^224 - 1.
 	mainPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 224), bigOne)
 
-        // nexPowLimit is the highest (easiest) proof of work value a nex block can
+	// nexPowLimit is the highest (easiest) proof of work value a nex block can
 	// have. It is the value 2^236 - 1 or
-        // 0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+	// 0x00000fffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
 	nexPowLimit = new(big.Int).Sub(new(big.Int).Lsh(bigOne, 236), bigOne)
 
 	// regressionPowLimit is the highest proof of work value a Bitcoin block
@@ -454,7 +454,7 @@ var NexParams = Params{
 	CoinbaseMaturity:                     100,
 	SubsidyReductionInterval:             210000,
 	TargetTimespan:                       time.Hour * 24 * 14, // 14 days
-	TargetTimePerBlock:                   time.Minute * 2,    // 2 minutes
+	TargetTimePerBlock:                   time.Minute * 2,     // 2 minutes
 	RetargetAdjustmentFactor:             4,                   // 25% less, 400% more
 	ReduceMinDifficulty:                  false,
 	NoDifficultyAdjustment:               false,
@@ -466,8 +466,7 @@ var NexParams = Params{
 	GenerateSupported:                    false,
 
 	// Checkpoints ordered from oldest to newest.
-	Checkpoints: []Checkpoint{
-	},
+	Checkpoints: []Checkpoint{},
 
 	// Consensus rule change deployments.
 	//
@@ -512,7 +511,6 @@ var NexParams = Params{
 	SlpIndexStartHash:   newHashFromStr("a73e8992af2a3b498c5114a6144b03bc41de938b39643fd82030f9721c0f8f1e"),
 	SlpAddressPrefix:    "simpleledger",
 }
-
 
 // RegressionNetParams defines the network parameters for the regression test
 // Bitcoin network.  Not to be confused with the test Bitcoin network (version
@@ -917,5 +915,5 @@ func init() {
 	mustRegister(&TestNet3Params)
 	mustRegister(&RegressionNetParams)
 	mustRegister(&SimNetParams)
-        mustRegister(&NexParams)
+	mustRegister(&NexParams)
 }

@@ -358,7 +358,7 @@ func checkProofOfWork(header *wire.BlockHeader, powLimit *big.Int, flags Behavio
 		return ruleError(ErrUnexpectedDifficulty, str)
 	}
 
-/* Nextchain TODO: don't bother to check POW
+	/* Nextchain TODO: don't bother to check POW
 	// The block hash must be less than the claimed target unless the flag
 	// to avoid proof of work checks is set.
 	if !flags.HasFlag(BFNoPoWCheck) {
@@ -371,7 +371,7 @@ func checkProofOfWork(header *wire.BlockHeader, powLimit *big.Int, flags Behavio
 			return ruleError(ErrHighHash, str)
 		}
 	}
-        */
+	*/
 
 	return nil
 }
@@ -632,7 +632,7 @@ func (b *BlockChain) checkBlockHeaderContext(header *wire.BlockHeader, prevNode 
 			return err
 		}
 		blockDifficulty := header.Bits
-              
+
 		if blockDifficulty != expectedDifficulty {
 			str := "Ignoring: block difficulty of %d is not the expected value of %d"
 			str = fmt.Sprintf(str, blockDifficulty, expectedDifficulty)

@@ -106,7 +106,7 @@ type config struct {
 	ProxyPass     string `long:"proxypass" default-mask:"-" description:"Password for proxy server"`
 	TestNet3      bool   `long:"testnet" description:"Connect to testnet"`
 	SimNet        bool   `long:"simnet" description:"Connect to the simulation test network"`
-        Nextchain     bool   `long:"nextchain" description:"Connect to the nextchain test network"`
+	Nextchain     bool   `long:"nextchain" description:"Connect to the nextchain test network"`
 	TLSSkipVerify bool   `long:"skipverify" description:"Do not verify tls certificates (not recommended!)"`
 	Wallet        bool   `long:"wallet" description:"Connect to wallet"`
 }

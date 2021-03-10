@@ -2,15 +2,14 @@
 
 echo "INFO: Cleaning up from previous runs..."
 docker-compose down
-docker rmi bchd_regtest
+docker rmi bchd_regtest nodejs_regtest
 rm -f ./rpc.bchd1.*
 
 echo "INFO: Creating bchd regtest network from source"
 docker-compose up -d
 
-echo "INFO: Running mocha tests"
-npm i
-npm test
+echo "INFO: Running mocha tests in docker"
+docker-compose exec nodejs ./_test.sh
 exit_code=$?
 
 echo "INFO: Cleaning up."

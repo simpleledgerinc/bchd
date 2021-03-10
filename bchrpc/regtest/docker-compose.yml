@@ -8,7 +8,7 @@ services:
       dockerfile: "./bchrpc/regtest/Dockerfile.bchd"
       context: "../.."
     depends_on: 
-      - bchd2  # uses the bchd.sh script to delete the prev key/pair, otherwise we need to manually delete 
+      - bchd2  # uses the test.sh script to delete the prev key/pair, otherwise we need to manually delete 
     volumes: 
       - ./:/data       # stores self-generated rpc.bchd1.key & rpc.bchd1.cert here so we can use it with gRPC client
     entrypoint: [ "/data/bchd-entrypoint.sh", "bchd1" ]
@@ -32,4 +32,15 @@ services:
     ports:
       - "18334:18334"  # RPC service
 
-  # TODO: create a container for running the node.js mocha tests
+  # a node.js image for running the actual unit tests (via `docker-compose exec` in ./test.sh)
+  nodejs:
+    image: "nodejs_regtest"
+    build:
+      dockerfile: "./bchrpc/regtest/Dockerfile.nodejs"
+      context: "../.."
+    volumes:
+      - ./:/data
+    depends_on:
+      - "bchd1"
+      - "bchd2"
+    command: tail -F anything

@@ -1,18 +1,14 @@
 import { step } from 'mocha-steps';
 import * as assert from "assert";
-import { GetAddressUnspentOutputsResponse, GetBlockchainInfoResponse, GrpcClient, SlpAction, SlpTransactionInfo } from "grpc-bchrpc-node";
+import { GetAddressUnspentOutputsResponse, GetBlockchainInfoResponse, SlpAction, SlpTransactionInfo } from "grpc-bchrpc-node";
 import { PrivateKey, Networks, Transaction, Script, Address } from "bitcore-lib-cash";
 import * as bchaddrjs from "bchaddrjs-slp";
-import { BitcoinRpcClient } from "../lib/rpc";
 import * as mdm from "slp-mdm";
-import { sleep } from '../lib/utils';
+import { createGrpcClient, createRpcClient, sleep } from '../lib/utils';
 
 // setup RPC clients (used primarily for generating blocks only)
-const rpcClient = require('bitcoin-rpc-promise');
-const bchd2Rpc = new rpcClient('http://bitcoin:password@0.0.0.0:18334') as BitcoinRpcClient;
-
-// setup gRPC client (used for getting info)
-const bchd1Grpc = new GrpcClient({ url: "localhost:18335", rootCertPath: "./rpc.bchd1.cert", testnet: true });
+const bchd1Grpc = createGrpcClient();
+const bchd2Rpc = createRpcClient();
 
 // private key for the mining address (address is stored in bchd.conf)
 //

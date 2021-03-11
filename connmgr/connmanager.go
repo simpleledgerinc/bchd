@@ -194,8 +194,6 @@ type ConnManager struct {
 	failedAttempts uint64
 	requests       chan interface{}
 	quit           chan struct{}
-
-	sync.Mutex
 }
 
 // handleFailedConn handles a connection failed due to a disconnect or any
@@ -408,13 +406,7 @@ func (cm *ConnManager) newAddress() (net.Addr, error) {
 
 // NewConnReq creates a new connection request and connects to the
 // corresponding address.
-//
-// Since this method is called many times via goroutine a lock is used
-// to serialize those calls and reduce duplicate connections.
 func (cm *ConnManager) NewConnReq() {
-	// cm.Lock()
-	// defer cm.Unlock()
-
 	if atomic.LoadInt32(&cm.stop) != 0 {
 		return
 	}

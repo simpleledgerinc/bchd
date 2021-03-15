@@ -5,16 +5,18 @@
 package indexers
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gcash/bchd/blockchain"
 	"github.com/gcash/bchd/chaincfg/chainhash"
 	"github.com/gcash/bchd/database"
+	"github.com/gcash/bchd/txscript"
 	"github.com/gcash/bchd/wire"
 	"github.com/gcash/bchutil"
-	"github.com/simpleledgerinc/goslp/v1parser"
 )
 
 const (
@@ -29,11 +31,11 @@ var (
 
 	// groupIDByHashIndexBucketName is the name of the db bucket used to house
 	// the group id (bytes) -> group id (uint32) index.
-	groupIDByHashIndexBucketName = []byte("groupidbyhashidx")
+	groupIDByHashIndexBucketName = []byte("groupidbybytesidx")
 
-	// groupInfoByIDIndexBucketName is the name of the db bucket used to house
-	// the group id -> group metadata info index.
-	groupInfoByIDIndexBucketName = []byte("groupinfobyididx")
+	// groupMetadataByIDIndexBucketName is the name of the db bucket used to house
+	// the group id -> group info index (currently only the group id bytes).
+	groupMetadataByIDIndexBucketName = []byte("groupinfobyididx")
 
 	// errNoGroupMetadataEntry is an error that indicates a requested entry does
 	// not exist in the token metadata index.
@@ -45,7 +47,7 @@ var (
 )
 
 // -----------------------------------------------------------------------------
-// The slp index consists of an entry for every slp-like transaction in the main
+// The group index consists of an entry for every group-like transaction in the main
 // chain.  In order to significantly optimize the space requirements a separate
 // index which provides an internal mapping between each TokenID that has been
 // indexed and a unique ID for use within the hash to location mappings.  The ID
@@ -53,104 +55,104 @@ var (
 // only 4 bytes versus 32 bytes hashes and thus saves a ton of space in the
 // index.
 //
-// There are three buckets used in total.  The first bucket maps the TokenID
+// There are three buckets used in total.  The first bucket maps the GroupID
 // hash to the specific uint32 ID location.  The second bucket maps the
-// uint32 of each TokenID to the actual TokenID hash and the third maps that
-// unique uint32 ID back to the TokenID hash.
+// uint32 of each GroupID to the actual GroupID hash and the third maps that
+// unique transaction hash to unint32 GroupID and the tx's group value.
 //
 //
 // The serialized format for keys and values in the TokenID hash to ID bucket is:
-//   <hash> = <ID>
+//   <group id hash> => <group id uint32>
 //
 //   Field           Type              Size
-//   TokenID hash    chainhash.Hash    32 bytes
+//   Group ID hash   []bytes     	   32 bytes (this is the sha256 hash of a whole group id, which includes subgroup component)
 //   ID              uint32            4 bytes
 //   -----
 //   Total: 36 bytes
 //
 // The serialized format for keys and values in the ID to TokenID hash bucket is:
-//   <ID> = <group id txid><mint baton hash><uint32>
+//   <group id uint32> => <parent id uint32><group or subgroup id bytes> <future group metadata>
 //
 //   Field            					Type              Size
 //   ID               					uint32            4 bytes
-//   TokenID hash                   	chainhash.Hash    32 bytes
-//   slp version	    				uint16            2 bytes
-//   Mint baton hash (or nft group id)  chainhash.Hash    32 bytes (optional)
-//   Mint baton vout  					uint32			  4 bytes  (optional)
+//	 Parent Group ID					uint32			  4 bytes (this is zero'd out if not a subgroup)
+//   Group ID                   		[]bytes   		  32 bytes normally, but this can be less if there is a parent group
 //   -----
-//   Max: 74 bytes max
+//   Max: X bytes max
 //
 // The serialized format for the keys and values in the slp index bucket is:
 //
-//   <txhash> = <group id><slp version><slp op_return>
+//   <txhash> = <group id uint32><qty or flags>
 //
 //   Field           	Type              Size
-//   txhash          	chainhash.Hash    32 bytes
+//   <txhash><vout>     []bytes   	      36 bytes (32 byte hash + 4 byte uint32 vout)
 //   group id        	uint32            4 bytes
-//   slp version	    uint16            2 bytes
-//	 op_return			[]bytes			  typically <220 bytes
+//	 parent group id	uint32			  4 bytes (this is zero'd out if not a subgroup)
+//	 quantity_or_flags	[]bytes			  2, 4, or 8 bytes
 //   -----
-//   Max: 258 bytes (if op_return is limited to 220 bytes)
-//	 Min: 43 bytes (4 + 2 + 37)
-//
-//   NOTE: The minimum possible slp op_return is 37 bytes, this is empty genesis
+//   Max: 16 bytes
+//	 Min: 10 bytes
 //
 // -----------------------------------------------------------------------------
 
-// GroupMetadata is used to hold the unmarshalled data parsed from the group id index
+// GroupMetadata is used to hold the unmarshalled data parsed from
+// the group id uint32 -> group id bytes index
 type GroupMetadata struct {
-	TokenID       *chainhash.Hash
-	SlpVersion    v1parser.TokenType
-	NftGroupID    *chainhash.Hash
-	MintBatonHash *chainhash.Hash
-	MintBatonVout uint32
+	GroupIDBytes  []byte
+	GroupID       uint32
+	ParentGroupID uint32
+}
+type dbGroupMetadata struct {
+	nonfinalGroupID []byte
+	groupID         uint32
+	parentGroupID   uint32
 }
 
-// dbPutGroupIDIndexEntry uses an existing database transaction to update or add
+// dbPutGroupMetadataIndexEntry uses an existing database transaction to update or add
 // the index entries for the hash to id and id to hash mappings for the provided
 // values.
-func dbPutGroupIDIndexEntry(dbTx database.Tx, id uint32, metadata *GroupMetadata) error {
+func dbPutGroupMetadataIndexEntry(dbTx database.Tx, groupID uint32, metadata *GroupMetadata) error {
 	// Serialize the height for use in the index entries.
 	var serializedID [4]byte
-	byteOrder.PutUint32(serializedID[:], id)
+	byteOrder.PutUint32(serializedID[:], groupID)
 
-	// Add the group id by token hash mapping to the index.
-	meta := dbTx.Metadata()
-	hashIndex := meta.Bucket(groupIDByHashIndexBucketName)
-	if err := hashIndex.Put(metadata.TokenID[:], serializedID[:]); err != nil {
+	// Add the group id by group id hash mapping to the index.
+	dbMeta := dbTx.Metadata()
+	hashIndex := dbMeta.Bucket(groupIDByHashIndexBucketName)
+	groupIDHash := sha256.Sum256(metadata.GroupIDBytes)
+	if err := hashIndex.Put(groupIDHash[:], serializedID[:]); err != nil {
 		return err
 	}
 
-	// Add or update token metadata by uint32 tokenID mapping to the index.
-	tmIndex := meta.Bucket(groupInfoByIDIndexBucketName)
-	GroupMetadata := make([]byte, 32+2+32+4)
-
-	copy(GroupMetadata[0:], metadata.TokenID[:])
-
-	byteOrder.PutUint16(GroupMetadata[32:], uint16(metadata.SlpVersion))
-
-	if metadata.NftGroupID != nil {
-		copy(GroupMetadata[34:], metadata.NftGroupID[:])
-		GroupMetadata = GroupMetadata[:66]
-	} else if metadata.MintBatonHash != nil {
-		copy(GroupMetadata[34:], metadata.MintBatonHash[:])
-		byteOrder.PutUint32(GroupMetadata[66:], metadata.MintBatonVout)
+	// Add or update token metadata by uint32 groupID mapping to the index.
+	metadataIndex := dbMeta.Bucket(groupMetadataByIDIndexBucketName)
+	serializedGroupMetadata := make([]byte, 4+len(metadata.GroupIDBytes))
+	var parentGroupId [4]byte
+	byteOrder.PutUint32(parentGroupId[:], metadata.ParentGroupID)
+	copy(serializedGroupMetadata[0:], parentGroupId[:])
+	if len(metadata.GroupIDBytes) > 32 {
+		if metadata.ParentGroupID == 0 {
+			return fmt.Errorf("cannot have a parent group id of 0 when group id is >32 bytes")
+		}
+		copy(serializedGroupMetadata[4:], metadata.GroupIDBytes[32:])
 	} else {
-		GroupMetadata = GroupMetadata[:34]
+		if metadata.ParentGroupID != 0 {
+			return fmt.Errorf("parent group id must be 0 when group id is 32 bytes")
+		}
+		copy(serializedGroupMetadata[4:], metadata.GroupIDBytes)
 	}
-
-	if metadata.NftGroupID == nil && metadata.SlpVersion == v1parser.TokenTypeNft1Child41 {
-		return fmt.Errorf("missing nft group id for NFT child %v", id)
-	}
-
-	return tmIndex.Put(serializedID[:], GroupMetadata)
+	log.Infof("new group (id: %s, hex: %s, parent id: %s)", fmt.Sprint(groupID), hex.EncodeToString(metadata.GroupIDBytes), fmt.Sprint(metadata.ParentGroupID))
+	return metadataIndex.Put(serializedID[:], serializedGroupMetadata)
 }
 
 // dbFetchGroupIDByHash uses an existing database transaction to retrieve the
-// group id for the provided hash from the index.
-func dbFetchGroupIDByHash(dbTx database.Tx, hash *chainhash.Hash) (uint32, error) {
+// group id for the provided group id sha256 hash from the index.
+func dbFetchGroupIDByHash(dbTx database.Tx, groupIDHash [32]byte) (uint32, error) {
+	if len(groupIDHash) != 32 {
+		return 0, fmt.Errorf("group id hash must have a length of 32 bytes")
+	}
 	hashIndex := dbTx.Metadata().Bucket(groupIDByHashIndexBucketName)
-	serializedID := hashIndex.Get(hash[:])
+	serializedID := hashIndex.Get(groupIDHash[:])
 	if serializedID == nil {
 		return 0, errNoGroupIDHashEntry
 	}
@@ -159,156 +161,93 @@ func dbFetchGroupIDByHash(dbTx database.Tx, hash *chainhash.Hash) (uint32, error
 
 // dbFetchGroupMetadataBySerializedID uses an existing database transaction to
 // retrieve the hash for the provided serialized group id from the index.
-func dbFetchGroupMetadataBySerializedID(dbTx database.Tx, serializedID []byte) (*GroupMetadata, error) {
-	idIndex := dbTx.Metadata().Bucket(groupInfoByIDIndexBucketName)
+func dbFetchGroupMetadataBySerializedID(dbTx database.Tx, serializedID []byte) (*dbGroupMetadata, error) {
+	idIndex := dbTx.Metadata().Bucket(groupMetadataByIDIndexBucketName)
 	serializedData := idIndex.Get(serializedID)
 	if serializedData == nil {
 		return nil, errNoGroupMetadataEntry
 	}
 
-	tokenIDHash, err := chainhash.NewHash(serializedData[0:32])
-	if err != nil {
-		return nil, fmt.Errorf("failed to create hash from %s", hex.EncodeToString(serializedData[0:32]))
-	}
-	if len(serializedData) < 34 {
-		return nil, fmt.Errorf("missing token version type for token metadata of group id %v", tokenIDHash)
+	expectedMinSize := 4 + 32
+	if len(serializedData) < expectedMinSize {
+		return nil, fmt.Errorf("group metadata less than %s bytes %s", fmt.Sprint(expectedMinSize), hex.EncodeToString(serializedData))
 	}
 
-	slpVersion := v1parser.TokenType(byteOrder.Uint16(serializedData[32:34]))
+	// TODO: parse the group id into group flag and sub group id components ?
 
-	var (
-		mintBatonHash *chainhash.Hash
-		mintBatonVout uint32
-		nft1GroupID   *chainhash.Hash
-	)
-	if len(serializedData) == 70 {
-		if slpVersion == v1parser.TokenTypeNft1Child41 {
-			return nil, errors.New("cannot have this stored data length with nft1 child, drop and add GroupIndex")
-		}
-		var err error
-		mintBatonHash, err = chainhash.NewHash(serializedData[34:66])
-		if err != nil {
-			return nil, fmt.Errorf("could not create mint baton hash with data: %s", hex.EncodeToString(serializedData[34:66]))
-		}
-		mintBatonVout = byteOrder.Uint32(serializedData[66:])
-	} else if len(serializedData) == 66 {
-		if slpVersion != v1parser.TokenTypeNft1Child41 {
-			return nil, errors.New("cannot have this stored data length if not nft1 child, drop and add GroupIndex")
-		}
-		var err error
-		nft1GroupID, err = chainhash.NewHash(serializedData[34:])
-		if err != nil {
-			return nil, fmt.Errorf("could not create nft group id hash with data: %s", hex.EncodeToString(serializedData[34:]))
-		}
-	}
-
-	tm := &GroupMetadata{
-		TokenID:       tokenIDHash,
-		NftGroupID:    nft1GroupID,
-		MintBatonHash: mintBatonHash,
-		MintBatonVout: mintBatonVout,
+	tm := &dbGroupMetadata{
+		nonfinalGroupID: serializedData[4:],
+		parentGroupID:   byteOrder.Uint32(serializedData[:4]),
+		groupID:         byteOrder.Uint32(serializedID),
 	}
 	return tm, nil
 }
 
 // dbFetchGroupMetadataByID uses an existing database transaction to retrieve the
 // hash for the provided group id from the index.
-func dbFetchGroupMetadataByID(dbTx database.Tx, id uint32) (*GroupMetadata, error) {
+func dbFetchGroupMetadataByID(dbTx database.Tx, id uint32) (*dbGroupMetadata, error) {
 	var serializedID [4]byte
 	byteOrder.PutUint32(serializedID[:], id)
 	return dbFetchGroupMetadataBySerializedID(dbTx, serializedID[:])
 }
 
 type dbGroupIndexEntry struct {
-	tx             *wire.MsgTx
-	slpMsg         v1parser.ParseResult
-	tokenIDHash    *chainhash.Hash
-	slpMsgPkScript []byte
+	outpointID []byte
+	groupID    []byte
+	qtyOrFlags []byte
 }
 
 // dbPutGroupIndexEntry uses an existing database transaction to update the
 // transaction index given the provided serialized data that is expected to have
 // been serialized putGroupIndexEntry.
 func dbPutGroupIndexEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupIndexEntry) error {
-	txHash := entryInfo.tx.TxHash()
+	//txHash := entryInfo.tx.TxHash()
 
 	// get current tokenID uint32 for the tokenID hash, add new if needed
-	tokenID, err := dbFetchGroupIDByHash(dbTx, entryInfo.tokenIDHash)
+	groupID, err := dbFetchGroupIDByHash(dbTx, sha256.Sum256(entryInfo.groupID))
 	if err != nil {
-		tokenID = idx.curTokenID + 1
-	}
+		groupID = idx.curTokenID + 1
 
-	var (
-		GroupMetadataNeedsUpdated bool   = false
-		mintBatonVout             uint32 = 0
-		mintBatonHash             *chainhash.Hash
-		nft1GroupID               *chainhash.Hash
-	)
+		// 0 is used to indicate no parent group id
+		var parentGroupID uint32
+		parentGroupID = 0
 
-	switch entry := entryInfo.slpMsg.(type) {
-	case *v1parser.SlpGenesis:
-		idx.curTokenID++
-		GroupMetadataNeedsUpdated = true
-		if entry.MintBatonVout > 1 {
-			mintBatonVout = uint32(entry.MintBatonVout)
-			mintBatonHash = &txHash
-		} else if entry.TokenType() == v1parser.TokenTypeNft1Child41 {
-			if len(entryInfo.tx.TxIn) < 1 {
-				return errors.New("entryInfo transaction has no inputs")
-			}
-			groupTokenEntry, err := dbFetchGroupIndexEntry(dbTx, &entryInfo.tx.TxIn[0].PreviousOutPoint.Hash)
+		// check that we don't have a subgroup created before a parent group id
+		// this could only happen if we don't topologically order the block transactions!
+		if len(entryInfo.groupID) > 32 {
+			parentGroupID, err = dbFetchGroupIDByHash(dbTx, sha256.Sum256(entryInfo.groupID[:32]))
 			if err != nil {
-				return fmt.Errorf("failed to fetch nft parent group id %v: %v", entryInfo.tx.TxIn[0].PreviousOutPoint.Hash, err)
+				msg := fmt.Sprintf("parent group id not found for group %s (this should never happen)", hex.EncodeToString(entryInfo.groupID))
+				log.Criticalf(msg)
+				return errors.New(msg)
 			}
-			nft1GroupID = &groupTokenEntry.TokenIDHash
 		}
-	case *v1parser.SlpMint:
-		GroupMetadataNeedsUpdated = true
-		if entry.MintBatonVout > 1 {
-			mintBatonVout = uint32(entry.MintBatonVout)
-			mintBatonHash = &txHash
-		}
-	}
 
-	// maybe update token metadata
-	if GroupMetadataNeedsUpdated {
-		err = dbPutGroupIDIndexEntry(dbTx, tokenID,
+		err = dbPutGroupMetadataIndexEntry(dbTx, groupID,
 			&GroupMetadata{
-				TokenID:       entryInfo.tokenIDHash,
-				SlpVersion:    entryInfo.slpMsg.TokenType(),
-				MintBatonHash: mintBatonHash,
-				MintBatonVout: mintBatonVout,
-				NftGroupID:    nft1GroupID,
-			})
+				GroupID:       groupID,
+				GroupIDBytes:  entryInfo.groupID,
+				ParentGroupID: parentGroupID,
+			},
+		)
 		if err != nil {
-			return fmt.Errorf("failed to update db for group id: %v, this should never happen", entryInfo.tokenIDHash)
+			return fmt.Errorf("failed to update db for token id: %v, this should never happen", entryInfo.groupID)
 		}
+		idx.curTokenID++
 	}
 
-	// err = idx.cache.AddGroupTxEntry(&txHash, GroupTxEntry{
-	// 	TokenID:        tokenID,
-	// 	TokenIDHash:    *entryInfo.tokenIDHash,
-	// 	SlpVersionType: entryInfo.slpMsg.TokenType(),
-	// 	SlpOpReturn:    entryInfo.slpMsgPkScript,
-	// })
-	// if err != nil {
-	// 	log.Criticalf("AddGroupTxEntry in dbPutGroupIndexEntry failed: ", err)
-	// }
-
-	target := make([]byte, 4+2+len(entryInfo.slpMsgPkScript))
-	byteOrder.PutUint32(target[:], tokenID)
-	byteOrder.PutUint16(target[4:], uint16(entryInfo.slpMsg.TokenType()))
-	copy(target[6:], entryInfo.slpMsgPkScript)
-	GroupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
-	return GroupIndex.Put(txHash[:], target)
+	target := make([]byte, 4+len(entryInfo.qtyOrFlags))
+	byteOrder.PutUint32(target[:], groupID)
+	copy(target[4:], entryInfo.qtyOrFlags)
+	groupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
+	return groupIndex.Put(entryInfo.outpointID[:], target)
 }
 
 // GroupTxEntry is a valid slp token stored in the slp index
 type GroupTxEntry struct {
-	TokenID        uint32
-	TokenIDHash    chainhash.Hash
-	SlpVersionType v1parser.TokenType
-	SlpOpReturn    []byte
+	GroupID       uint32
+	ParentGroupID uint32
+	QtyOrFlags    []byte
 }
 
 // dbFetchGroupIndexEntry uses an existing database transaction to fetch the serialized slp
@@ -323,8 +262,8 @@ func dbFetchGroupIndexEntry(dbTx database.Tx, txHash *chainhash.Hash) (*GroupTxE
 	}
 
 	// Ensure the serialized data has enough bytes to properly deserialize.
-	// The minimum possible entry size is 4 + 2 + 37 = 43, which is an empty GENESIS slp OP_RETURN.
-	if len(serializedData) < 43 {
+	// The minimum possible entry size is 4 + 1 + 2 = 7
+	if len(serializedData) < 6 {
 		return nil, database.Error{
 			ErrorCode: database.ErrCorruption,
 			Description: fmt.Sprintf("corrupt slp index "+
@@ -332,15 +271,19 @@ func dbFetchGroupIndexEntry(dbTx database.Tx, txHash *chainhash.Hash) (*GroupTxE
 		}
 	}
 	entry := &GroupTxEntry{
-		TokenID: byteOrder.Uint32(serializedData[0:4]),
+		GroupID: byteOrder.Uint32(serializedData[0:4]),
 	}
-	GroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.TokenID)
-	if err != nil {
-		return nil, err
+
+	// Check to see if this is a subgroup, if so then go look up the parent group id
+	if serializedData[4] > 0 {
+		GroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		entry.ParentGroupID = GroupMetadata.parentGroupID
 	}
-	entry.TokenIDHash = *GroupMetadata.TokenID
-	entry.SlpVersionType = v1parser.TokenType(byteOrder.Uint16(serializedData[4:6]))
-	entry.SlpOpReturn = serializedData[6:]
+
+	entry.QtyOrFlags = serializedData[5:]
 	return entry, nil
 }
 
@@ -407,20 +350,20 @@ func (idx *GroupIndex) Init() error {
 	// write another value to the database on every update.
 	err := idx.db.View(func(dbTx database.Tx) error {
 		var highestKnown, nextUnknown uint32
-		testTokenID := uint32(1)
+		testGroupID := uint32(1)
 		increment := uint32(1)
 		for {
-			md, err := dbFetchGroupMetadataByID(dbTx, testTokenID)
+			md, err := dbFetchGroupMetadataByID(dbTx, testGroupID)
 			if err != nil {
 				if md != nil {
 					return fmt.Errorf("could not init slp index: %v", err)
 				}
-				nextUnknown = testTokenID
+				nextUnknown = testGroupID
 				break
 			}
 
-			highestKnown = testTokenID
-			testTokenID += increment
+			highestKnown = testGroupID
+			testGroupID += increment
 		}
 		log.Tracef("Forward scan (highest known %d, next unknown %d)",
 			highestKnown, nextUnknown)
@@ -433,7 +376,7 @@ func (idx *GroupIndex) Init() error {
 		return err
 	}
 
-	log.Infof("Current number of slp tokens in index: %v", idx.curTokenID)
+	log.Infof("Current number of group tokens in index: %v", idx.curTokenID)
 	return nil
 }
 
@@ -441,7 +384,7 @@ func (idx *GroupIndex) Init() error {
 //
 // This is part of the Indexer interface.
 func (idx *GroupIndex) StartBlock() (*chainhash.Hash, int32) {
-	return idx.config.StartHash, idx.config.StartHeight
+	return nil, -1
 }
 
 // Migrate is only provided to satisfy the Indexer interface as there is nothing to
@@ -477,7 +420,7 @@ func (idx *GroupIndex) Create(dbTx database.Tx) error {
 	if _, err := meta.CreateBucket(groupIDByHashIndexBucketName); err != nil {
 		return err
 	}
-	if _, err := meta.CreateBucket(groupInfoByIDIndexBucketName); err != nil {
+	if _, err := meta.CreateBucket(groupMetadataByIDIndexBucketName); err != nil {
 		return err
 	}
 	_, err := meta.CreateBucket(groupTxIndexKey)
@@ -491,16 +434,20 @@ func (idx *GroupIndex) Create(dbTx database.Tx) error {
 // This is part of the Indexer interface.
 func (idx *GroupIndex) ConnectBlock(dbTx database.Tx, block *bchutil.Block, stxos []blockchain.SpentTxOut) error {
 
-	putTxIndexEntry := func(tx *wire.MsgTx, slpMsg v1parser.ParseResult, tokenIDHash *chainhash.Hash) error {
-		if len(tx.TxOut) < 1 {
-			return fmt.Errorf("transaction has no outputs %v", tx.TxHash())
-		}
+	putTxIndexEntry := func(txHash *chainhash.Hash, vout uint32, groupIDBytes []byte, qtyOrFlags []byte) error {
+
+		outpointID := make([]byte, 36)
+		copy(outpointID[0:], txHash[:])
+		voutSerialized := make([]byte, 4)
+		byteOrder.PutUint32(voutSerialized, vout)
+		copy(outpointID[32:], voutSerialized)
+
+		log.Infof("group out %v:%s, id: %s, val: %s", txHash, fmt.Sprint(vout), hex.EncodeToString(groupIDBytes), hex.EncodeToString(qtyOrFlags))
 
 		return dbPutGroupIndexEntry(idx, dbTx, &dbGroupIndexEntry{
-			tx:             tx,
-			slpMsg:         slpMsg,
-			tokenIDHash:    tokenIDHash,
-			slpMsgPkScript: tx.TxOut[0].PkScript,
+			outpointID: outpointID,
+			groupID:    groupIDBytes,
+			qtyOrFlags: qtyOrFlags,
 		})
 	}
 
@@ -515,54 +462,81 @@ func (idx *GroupIndex) ConnectBlock(dbTx database.Tx, block *bchutil.Block, stxo
 	return nil
 }
 
-func (idx *GroupIndex) checkBurnedInputForMintBaton(dbTx database.Tx, burn *BurnedInput) (bool, error) {
-
-	// we can skip nft children since they don't have mint batons
-	if burn.SlpMsg.TokenType() == v1parser.TokenTypeNft1Child41 {
-		return false, nil
-	}
-
-	// check if input is the mint baton from either Genesis or Mint parent data
-	switch msg := burn.SlpMsg.(type) {
-	case *v1parser.SlpGenesis:
-		if msg.MintBatonVout != int(burn.TxInput.PreviousOutPoint.Index) {
-			return false, nil
-		}
-	case *v1parser.SlpMint:
-		if msg.MintBatonVout != int(burn.TxInput.PreviousOutPoint.Index) {
-			return false, nil
-		}
-	default:
-		return false, nil
-	}
-
-	// double-check this burned mint baton was a valid slp token
-	if burn.Entry == nil {
-		return false, nil
-	}
-
-	err := dbPutGroupIDIndexEntry(dbTx, burn.Entry.TokenID,
-		&GroupMetadata{
-			TokenID:       &burn.Entry.TokenIDHash,
-			SlpVersion:    burn.Entry.SlpVersionType,
-			MintBatonHash: nil,
-			MintBatonVout: 0,
-			NftGroupID:    nil,
-		},
-	)
-	if err != nil {
-		return false, fmt.Errorf("could not update token metadata for group id: %v", burn.Entry.TokenIDHash)
-	}
-
-	return true, nil
-}
-
 // AddGroupTxIndexEntryHandler provides a function interface for CheckGroupTx
-type AddGroupTxIndexEntryHandler func(*wire.MsgTx, v1parser.ParseResult, *chainhash.Hash) error
+type AddGroupTxIndexEntryHandler func(*chainhash.Hash, uint32, []byte, []byte) error
 
 // CheckGroupTx checks a transaction for validity and adds valid transactions to the db
 func CheckGroupTx(tx *wire.MsgTx, putTxIndexEntry AddGroupTxIndexEntryHandler) (bool, error) {
-	return false, nil
+
+	txHash := tx.TxHash()
+	hadOutput := false
+
+	// look at the output scriptPubKey and parse out the group parts
+	for vout, output := range tx.TxOut {
+
+		// any OP_GROUP output will be larger than 35 bytes for sure
+		// since the group id (min 32 bytes), the group value (min 2 bytes),
+		// and the group opcode (1 byte) make up 35 bytes.  This doesn't
+		// even account for the remaining part of the script.
+		if len(output.PkScript) < 35 {
+			continue
+		}
+
+		// parse the script into its data push components
+		// and check that OP_GROUP is at index 2.
+		disassembledScript, err := txscript.DisasmString(output.PkScript)
+		if err != nil {
+			log.Criticalf("group output script disasm failed: %v", err)
+			continue
+		}
+
+		splitDisassembledScript := strings.Split(disassembledScript, " ")
+
+		// use length check to filter out known non-group scripts since
+		// group prefix has 3 items.
+		if len(splitDisassembledScript) < 3 {
+			continue
+		}
+
+		// group id is at index 0
+		if len(splitDisassembledScript[0]) < 32*2 {
+			log.Critical("OP_GROUP id is less than 32 bytes!")
+			continue
+		}
+		groupID, err := hex.DecodeString(splitDisassembledScript[0])
+		if err != nil {
+			log.Criticalf("couldn't decode group id: %v", err)
+			continue
+		}
+
+		// group value conforms to length requirement
+		valLen := len(splitDisassembledScript[1])
+		if valLen != 4 && valLen != 8 && valLen != 16 {
+			log.Critical("OP_GROUP value is not 2, 4, or 8 bytes!")
+			continue
+		}
+		groupVal, err := hex.DecodeString(splitDisassembledScript[1])
+		if err != nil {
+			log.Criticalf("couldn't decode group value: %v", err)
+			continue
+		}
+
+		// group opcode is at index 3
+		if splitDisassembledScript[2] != "OP_GROUP" {
+			log.Critical("OP_GROUP not detected in output script!")
+			continue
+		}
+
+		// save the group tx entry to the db
+		err = putTxIndexEntry(&txHash, uint32(vout), groupID, groupVal)
+		if err != nil {
+			return false, err
+		}
+
+		hadOutput = true
+	}
+
+	return hadOutput, nil
 }
 
 // DisconnectBlock is invoked by the index manager when a block has been
@@ -606,130 +580,60 @@ func (idx *GroupIndex) GetGroupIndexEntry(dbTx database.Tx, hash *chainhash.Hash
 }
 
 // GetGroupMetadata fetches token metadata properties from an GroupIndexEntry
+//
+// NOTE: currently since this group metadata
+//
 func (idx *GroupIndex) GetGroupMetadata(dbTx database.Tx, entry *GroupTxEntry) (*GroupMetadata, error) {
 	// if tm, ok := idx.cache.GetGroupMetadata(&entry.TokenIDHash); ok {
 	// 	log.Debugf("using token metadata cache for %s", hex.EncodeToString(entry.TokenIDHash[:]))
 	// 	return &tm, nil
 	// }
 
-	if entry.TokenID == 0 {
-		id, err := dbFetchGroupIDByHash(dbTx, &entry.TokenIDHash)
+	groupIdBytes := make([]byte, 0)
+	if entry.ParentGroupID > 0 {
+		dbGroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.ParentGroupID)
 		if err != nil {
-			log.Debugf("db is missing tokenID %s", hex.EncodeToString(entry.TokenIDHash[:]))
 			return nil, err
 		}
-		entry.TokenID = id
+		groupIdBytes = append(groupIdBytes, dbGroupMetadata.nonfinalGroupID...)
+
+		dbSubGroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		groupIdBytes = append(groupIdBytes, dbSubGroupMetadata.nonfinalGroupID...)
+	} else {
+		dbGroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.GroupID)
+		if err != nil {
+			return nil, err
+		}
+		copy(groupIdBytes, dbGroupMetadata.nonfinalGroupID)
 	}
 
-	// fallback to fetch token metadata from db
-	tm, err := dbFetchGroupMetadataByID(dbTx, entry.TokenID)
-	if err != nil {
-		return nil, err
+	if len(groupIdBytes) < 32 {
+		return nil, fmt.Errorf("group id cannot be smaller than 32 bytes")
+	}
+
+	tm := &GroupMetadata{
+		GroupIDBytes:  groupIdBytes,
+		ParentGroupID: entry.ParentGroupID,
+		GroupID:       entry.GroupID,
 	}
 
 	// err = idx.cache.AddTempGroupMetadata(*tm)
 	// if err != nil {
 	// 	log.Criticalf("AddTempGroupMetadata in GetGroupMetadata failed: ", err)
 	// }
+
 	return tm, nil
 }
 
-// // AddPotentialSlpEntries checks if a transaction is slp valid and then will add a
-// // new GroupIndexEntry to the shared cache of valid slp transactions.
-// //
-// // This method should be used to assess slp validity of newly received mempool items and also in rpc
-// // client subscriber methods that return notifications for both mempool and block events to prevent
-// // any possibility of a race conditions with manageSlpEntryCache.
+// AddPotentialSlpEntries checks if a transaction is slp valid and then will add a
+// new GroupIndexEntry to the shared cache of valid slp transactions.
 // func (idx *GroupIndex) AddPotentialSlpEntries(dbTx database.Tx, msgTx *wire.MsgTx) (bool, error) {
-
-// 	getGroupIndexEntry := func(txiHash *chainhash.Hash) (*GroupTxEntry, error) {
-// 		entry, err := idx.GetGroupIndexEntry(dbTx, txiHash)
-// 		if entry != nil {
-// 			return entry, nil
-// 		}
-
-// 		return nil, err
-// 	}
-
-// 	putTxIndexEntry := func(tx *wire.MsgTx, slpMsg v1parser.ParseResult, tokenIDHash *chainhash.Hash) error {
-// 		scriptPubKey := tx.TxOut[0].PkScript
-// 		hash := tx.TxHash()
-
-// 		// add item to slp txn cache
-// 		idx.cache.AddMempoolGroupTxEntry(&hash, GroupTxEntry{
-// 			TokenID:        0,
-// 			TokenIDHash:    *tokenIDHash,
-// 			SlpVersionType: slpMsg.TokenType(),
-// 			SlpOpReturn:    scriptPubKey,
-// 		})
-
-// 		// add or update token metadata cache
-// 		switch t := slpMsg.(type) {
-// 		case *v1parser.SlpGenesis:
-// 			// add genesis token metadata to cache
-// 			log.Debugf("adding slp genesis token metadata for %v", hex.EncodeToString(tokenIDHash[:]))
-// 			tm := GroupMetadata{
-// 				TokenID:    tokenIDHash,
-// 				SlpVersion: slpMsg.TokenType(),
-// 			}
-// 			if slpMsg.TokenType() == v1parser.TokenTypeNft1Child41 {
-// 				// handle special case for NFT child with group id
-// 				err := idx.db.View(func(dbTx database.Tx) error {
-// 					entry, err := idx.GetGroupIndexEntry(dbTx, &tx.TxIn[0].PreviousOutPoint.Hash)
-// 					if err != nil {
-// 						return fmt.Errorf("nft child genesis has invalid group in txn %v: %v", tx.TxHash(), err)
-// 					}
-// 					tm.NftGroupID = &entry.TokenIDHash
-// 					if tm.NftGroupID == nil {
-// 						return fmt.Errorf("nft child group ID could not be resolved in txn %v", tx.TxHash())
-// 					}
-// 					return nil
-// 				})
-// 				if err != nil {
-// 					log.Debugf("AddPotentialSlpEntries: %v", err)
-// 				}
-// 			} else if t.MintBatonVout > 1 {
-// 				hash := tx.TxHash()
-// 				tm.MintBatonHash = &hash
-// 				tm.MintBatonVout = uint32(t.MintBatonVout)
-// 			}
-// 			err := idx.cache.AddTempGroupMetadata(tm)
-// 			if err != nil {
-// 				log.Criticalf("AddTempGroupMetadata in AddPotentialSlpEntries failed for Genesis: ", err)
-// 			}
-// 		case *v1parser.SlpMint:
-// 			// update the mint baton location
-// 			log.Debugf("adding slp mint token metadata for %v", hex.EncodeToString(tokenIDHash[:]))
-// 			err := idx.db.View(func(dbTx database.Tx) error {
-// 				hash := tx.TxHash()
-// 				entry, err := idx.GetGroupIndexEntry(dbTx, &hash)
-// 				tm, err := idx.GetGroupMetadata(dbTx, entry)
-// 				if err != nil {
-// 					return fmt.Errorf("could not retreive token metadata for mint txn %v: %v", hash, err)
-// 				}
-// 				if t.MintBatonVout > 1 {
-// 					hash := tx.TxHash()
-// 					tm.MintBatonHash = &hash
-// 					tm.MintBatonVout = uint32(t.MintBatonVout)
-// 					err := idx.cache.AddTempGroupMetadata(*tm)
-// 					if err != nil {
-// 						log.Criticalf("AddTempGroupMetadata in AddPotentialSlpEntries failed for Mint: ", err)
-// 					}
-// 				} else {
-// 					return fmt.Errorf("invalid mint baton for mint txn %v: %v", hash, err)
-// 				}
-// 				return nil
-// 			})
-// 			if err != nil {
-// 				log.Debugf("AddPotentialSlpEntries: %v", err)
-// 			}
-// 		}
-// 		return nil
-// 	}
-
-// 	valid, _, err := CheckGroupTx(msgTx, getGroupIndexEntry, putTxIndexEntry)
-
-// 	return valid, err
+//
+// TODO: this is used for mempool handling
+//
 // }
 
 // RemoveMempoolSlpTxs removes a list of transactions from the temporary cache that holds
@@ -740,9 +644,6 @@ func (idx *GroupIndex) RemoveMempoolSlpTxs(txs []*bchutil.Tx) {
 
 // GroupConfig provides the proper starting height and hash
 type GroupConfig struct {
-	StartHash    *chainhash.Hash
-	StartHeight  int32
-	AddrPrefix   string
 	MaxCacheSize int
 }
 
@@ -770,7 +671,7 @@ func dropGroupIndexes(db database.DB) error {
 			return err
 		}
 
-		return meta.DeleteBucket(groupInfoByIDIndexBucketName)
+		return meta.DeleteBucket(groupMetadataByIDIndexBucketName)
 	})
 }
 

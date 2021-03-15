@@ -98,10 +98,11 @@ type GrpcServerConfig struct {
 	TxMemPool   *mempool.TxPool
 	NetMgr      NetManager
 
-	TxIndex   *indexers.TxIndex
-	AddrIndex *indexers.AddrIndex
-	CfIndex   *indexers.CfIndex
-	SlpIndex  *indexers.SlpIndex
+	TxIndex    *indexers.TxIndex
+	AddrIndex  *indexers.AddrIndex
+	CfIndex    *indexers.CfIndex
+	SlpIndex   *indexers.SlpIndex
+	GroupIndex *indexers.GroupIndex
 }
 
 // GrpcServer is the gRPC server implementation. It holds all the objects
@@ -114,10 +115,11 @@ type GrpcServer struct {
 	txMemPool   *mempool.TxPool
 	netMgr      NetManager
 
-	txIndex   *indexers.TxIndex
-	addrIndex *indexers.AddrIndex
-	cfIndex   *indexers.CfIndex
-	slpIndex  *indexers.SlpIndex
+	txIndex    *indexers.TxIndex
+	addrIndex  *indexers.AddrIndex
+	cfIndex    *indexers.CfIndex
+	slpIndex   *indexers.SlpIndex
+	groupIndex *indexers.GroupIndex
 
 	httpServer *http.Server
 	subscribe  chan *rpcEventSubscription
@@ -143,6 +145,7 @@ func NewGrpcServer(cfg *GrpcServerConfig) *GrpcServer {
 		addrIndex:   cfg.AddrIndex,
 		cfIndex:     cfg.CfIndex,
 		slpIndex:    cfg.SlpIndex,
+		groupIndex:  cfg.GroupIndex,
 		httpServer:  cfg.HTTPServer,
 		subscribe:   make(chan *rpcEventSubscription),
 		events:      make(chan interface{}),

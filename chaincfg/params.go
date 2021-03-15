@@ -507,9 +507,9 @@ var NexParams = Params{
 	HDCoinType: 145,
 
 	// slp indexer parameters
-	SlpIndexStartHeight: 0,
-	SlpIndexStartHash:   newHashFromStr("a73e8992af2a3b498c5114a6144b03bc41de938b39643fd82030f9721c0f8f1e"),
-	SlpAddressPrefix:    "simpleledger",
+	SlpIndexStartHeight: -1,
+	SlpIndexStartHash:   &chainhash.Hash{},
+	SlpAddressPrefix:    "slptest",
 }
 
 // RegressionNetParams defines the network parameters for the regression test

@@ -66,6 +66,8 @@ const (
 	defaultAddrIndex               = false
 	defaultSlpIndex                = false
 	defaultSlpCacheMaxSize         = 100000
+	defaultGroupIndex              = false
+	defaultGroupCacheMaxSize       = 100000
 	defaultUtxoCacheMaxSizeMiB     = 450
 	defaultMinSyncPeerNetworkSpeed = 51200
 	defaultPruneDepth              = 4320
@@ -189,7 +191,10 @@ type config struct {
 	DropAddrIndex           bool          `long:"dropaddrindex" description:"Deletes the address-based transaction index from the database on start up and then exits."`
 	SlpIndex                bool          `long:"slpindex" description:"Maintain an index which makes slp transaction validity and token metadata available via various gRPC methods"`
 	SlpCacheMaxSize         uint          `long:"slpcachemaxsize" description:"The maximum number of entries in the slp indexer cache"`
-	DropSlpIndex            bool          `long:"dropslpindex" description:"Deletes the slp index from the database on start up and then exits."`
+	DropSlpIndex            bool          `long:"dropslpindex" description:"Deletes the group index from the database on start up and then exits."`
+	GroupIndex              bool          `long:"groupindex" description:"Maintain an index which makes group transaction validity and token metadata available via various gRPC methods"`
+	GroupCacheMaxSize       uint          `long:"groupcachemaxsize" description:"The maximum number of entries in the group indexer cache"`
+	DropGroupIndex          bool          `long:"dropgroupindex" description:"Deletes the group index from the database on start up and then exits."`
 	RelayNonStd             bool          `long:"relaynonstd" description:"Relay non-standard transactions regardless of the default settings for the active network."`
 	RejectNonStd            bool          `long:"rejectnonstd" description:"Reject non-standard transactions regardless of the default settings for the active network."`
 	Prune                   bool          `long:"prune" description:"Delete historical blocks from the chain. A buffer of blocks will be retained in case of a reorg."`
@@ -473,6 +478,8 @@ func loadConfig() (*config, []string, error) {
 		AddrIndex:               defaultAddrIndex,
 		SlpIndex:                defaultSlpIndex,
 		SlpCacheMaxSize:         defaultSlpCacheMaxSize,
+		GroupIndex:              defaultGroupIndex,
+		GroupCacheMaxSize:       defaultGroupCacheMaxSize,
 		PruneDepth:              defaultPruneDepth,
 		TargetOutboundPeers:     defaultTargetOutboundPeers,
 		DBCacheSize:             defaultDBCacheSize,
@@ -948,6 +955,16 @@ func loadConfig() (*config, []string, error) {
 	// --slpindex and --dropslpindex do not mix.
 	if cfg.SlpIndex && cfg.DropSlpIndex {
 		err := fmt.Errorf("%s: the --slpindex and --dropslpindex "+
+			"options may not be activated at the same time",
+			funcName)
+		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, usageMessage)
+		return nil, nil, err
+	}
+
+	// --groupindex and --dropgroupindex do not mix.
+	if cfg.GroupIndex && cfg.DropGroupIndex {
+		err := fmt.Errorf("%s: the --groupindex and --dropgroupindex "+
 			"options may not be activated at the same time",
 			funcName)
 		fmt.Fprintln(os.Stderr, err)

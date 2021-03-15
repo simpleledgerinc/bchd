@@ -265,10 +265,11 @@ type server struct {
 	// if the associated index is not enabled.  These fields are set during
 	// initial creation of the server and never changed afterwards, so they
 	// do not need to be protected for concurrent access.
-	txIndex   *indexers.TxIndex
-	addrIndex *indexers.AddrIndex
-	cfIndex   *indexers.CfIndex
-	slpIndex  *indexers.SlpIndex
+	txIndex    *indexers.TxIndex
+	addrIndex  *indexers.AddrIndex
+	cfIndex    *indexers.CfIndex
+	slpIndex   *indexers.SlpIndex
+	groupIndex *indexers.GroupIndex
 
 	// The fee estimator keeps track of how long transactions are left in
 	// the mempool before they are mined into blocks.
@@ -3193,6 +3194,15 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string, db database
 		s.slpIndex = indexers.NewSlpIndex(db, slpCfg)
 		indexes = append(indexes, s.slpIndex)
 	}
+	if cfg.GroupIndex {
+		indxLog.Info("Group index is enabled")
+
+		groupCfg := &indexers.GroupConfig{
+			MaxCacheSize: int(cfg.GroupCacheMaxSize),
+		}
+		s.groupIndex = indexers.NewGroupIndex(db, groupCfg)
+		indexes = append(indexes, s.groupIndex)
+	}
 	if !cfg.FastSync && !cfg.NoCFilters {
 		indxLog.Info("Committed filter index is enabled")
 		s.cfIndex = indexers.NewCfIndex(db, chainParams)
@@ -3454,6 +3464,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string, db database
 			AddrIndex:      s.addrIndex,
 			CfIndex:        s.cfIndex,
 			SlpIndex:       s.slpIndex,
+			GroupIndex:     s.groupIndex,
 			FeeEstimator:   s.feeEstimator,
 			Services:       s.services,
 			RPCAuthTimeout: cfg.RPCAuthTimeout,
@@ -3477,6 +3488,7 @@ func newServer(listenAddrs, agentBlacklist, agentWhitelist []string, db database
 			AddrIndex:   s.addrIndex,
 			CfIndex:     s.cfIndex,
 			SlpIndex:    s.slpIndex,
+			GroupIndex:  s.groupIndex,
 		}, &s)
 		if err != nil {
 			return nil, err

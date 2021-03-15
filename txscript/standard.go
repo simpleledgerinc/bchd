@@ -53,23 +53,27 @@ type ScriptClass byte
 
 // Classes of script payment known about in the blockchain.
 const (
-	NonStandardTy ScriptClass = iota // None of the recognized forms.
-	PubKeyTy                         // Pay pubkey.
-	PubKeyHashTy                     // Pay pubkey hash.
-	ScriptHashTy                     // Pay to script hash.
-	MultiSigTy                       // Multi signature.
-	NullDataTy                       // Empty data-only (provably prunable).
+	NonStandardTy     ScriptClass = iota // None of the recognized forms.
+	PubKeyTy                             // Pay pubkey.
+	PubKeyHashTy                         // Pay pubkey hash.
+	GroupPubKeyHashTy                    // Group Pay pubkey hash.
+	ScriptHashTy                         // Pay to script hash.
+	GroupScriptHashTy                    // Group Pay to script hash.
+	MultiSigTy                           // Multi signature.
+	NullDataTy                           // Empty data-only (provably prunable).
 )
 
 // scriptClassToName houses the human-readable strings which describe each
 // script class.
 var scriptClassToName = []string{
-	NonStandardTy: "nonstandard",
-	PubKeyTy:      "pubkey",
-	PubKeyHashTy:  "pubkeyhash",
-	ScriptHashTy:  "scripthash",
-	MultiSigTy:    "multisig",
-	NullDataTy:    "nulldata",
+	NonStandardTy:     "nonstandard",
+	PubKeyTy:          "pubkey",
+	PubKeyHashTy:      "pubkeyhash",
+	GroupPubKeyHashTy: "grouppubkeyhash",
+	ScriptHashTy:      "scripthash",
+	GroupScriptHashTy: "groupscripthash",
+	MultiSigTy:        "multisig",
+	NullDataTy:        "nulldata",
 }
 
 // String implements the Stringer interface by returning the name of
@@ -100,7 +104,18 @@ func isPubkeyHash(pops []parsedOpcode) bool {
 		pops[2].opcode.value == OP_DATA_20 &&
 		pops[3].opcode.value == OP_EQUALVERIFY &&
 		pops[4].opcode.value == OP_CHECKSIG
+}
 
+// isGroupPubkeyHash returns true if the script passed is a grouped pay-to-pubkey-hash
+// transaction, false otherwise.
+func isGroupPubkeyHash(pops []parsedOpcode) bool {
+	return len(pops) == 8 &&
+		pops[2].opcode.value == OP_GROUP &&
+		pops[3].opcode.value == OP_DUP &&
+		pops[4].opcode.value == OP_HASH160 &&
+		pops[5].opcode.value == OP_DATA_20 &&
+		pops[6].opcode.value == OP_EQUALVERIFY &&
+		pops[7].opcode.value == OP_CHECKSIG
 }
 
 // isMultiSig returns true if the passed script is a multisig transaction, false
@@ -179,8 +194,12 @@ func typeOfScript(pops []parsedOpcode) ScriptClass {
 		return PubKeyTy
 	} else if isPubkeyHash(pops) {
 		return PubKeyHashTy
+	} else if isGroupPubkeyHash(pops) {
+		return GroupPubKeyHashTy
 	} else if isScriptHash(pops) {
 		return ScriptHashTy
+	} else if isGroupScriptHash(pops) {
+		return GroupScriptHashTy
 	} else if isMultiSig(pops) {
 		return MultiSigTy
 	} else if isNullData(pops) {
@@ -528,6 +547,30 @@ func ExtractPkScriptAddrs(pkScript []byte, chainParams *chaincfg.Params) (Script
 	case NullDataTy:
 		// Null data transactions have no addresses or required
 		// signatures.
+
+	case GroupPubKeyHashTy:
+		// A pay-to-pubkey-hash script is of the form:
+		//  <group id> <group qty or flags> OP_GROUP OP_DUP OP_HASH160 <hash> OP_EQUALVERIFY OP_CHECKSIG
+		// Therefore the pubkey hash is the 3rd item on the stack.
+		// Skip the pubkey hash if it's invalid for some reason.
+		requiredSigs = 1
+		addr, err := bchutil.NewAddressPubKeyHash(pops[5].data,
+			chainParams)
+		if err == nil {
+			addrs = append(addrs, addr)
+		}
+
+	case GroupScriptHashTy:
+		// A pay-to-script-hash script is of the form:
+		//  <group id> <group qty or flags> OP_GROUP OP_HASH160 <scripthash> OP_EQUAL
+		// Therefore the script hash is the 2nd item on the stack.
+		// Skip the script hash if it's invalid for some reason.
+		requiredSigs = 1
+		addr, err := bchutil.NewAddressScriptHashFromHash(pops[4].data,
+			chainParams)
+		if err == nil {
+			addrs = append(addrs, addr)
+		}
 
 	case NonStandardTy:
 		// Don't attempt to extract addresses or required signatures for

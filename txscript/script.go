@@ -64,6 +64,16 @@ func isScriptHash(pops []parsedOpcode) bool {
 		pops[2].opcode.value == OP_EQUAL
 }
 
+// isGroupScriptHash returns true if the script passed is a grouped pay-to-script-hash
+// transaction, false otherwise.
+func isGroupScriptHash(pops []parsedOpcode) bool {
+	return len(pops) == 6 &&
+		pops[2].opcode.value == OP_GROUP &&
+		pops[3].opcode.value == OP_HASH160 &&
+		pops[4].opcode.value == OP_DATA_20 &&
+		pops[5].opcode.value == OP_EQUAL
+}
+
 // IsPayToScriptHash returns true if the script is in the standard
 // pay-to-script-hash (P2SH) format, false otherwise.
 func IsPayToScriptHash(script []byte) bool {

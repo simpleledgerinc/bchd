@@ -141,7 +141,6 @@ func dbPutGroupMetadataIndexEntry(dbTx database.Tx, groupID uint32, metadata *Gr
 		}
 		copy(serializedGroupMetadata[4:], metadata.GroupIDBytes)
 	}
-	log.Infof("new group (id: %s, hex: %s, parent id: %s)", fmt.Sprint(groupID), hex.EncodeToString(metadata.GroupIDBytes), fmt.Sprint(metadata.ParentGroupID))
 	return metadataIndex.Put(serializedID[:], serializedGroupMetadata)
 }
 
@@ -233,6 +232,7 @@ func dbPutGroupIndexEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupI
 		if err != nil {
 			return fmt.Errorf("failed to update db for token id: %v, this should never happen", entryInfo.groupID)
 		}
+		log.Infof("new group %s %s, id: %s, parentid: %s", hex.EncodeToString(entryInfo.groupID), hex.EncodeToString(entryInfo.qtyOrFlags), fmt.Sprint(groupID), fmt.Sprint(parentGroupID))
 		idx.curTokenID++
 	}
 
@@ -442,7 +442,7 @@ func (idx *GroupIndex) ConnectBlock(dbTx database.Tx, block *bchutil.Block, stxo
 		byteOrder.PutUint32(voutSerialized, vout)
 		copy(outpointID[32:], voutSerialized)
 
-		log.Infof("group out %v:%s, id: %s, val: %s", txHash, fmt.Sprint(vout), hex.EncodeToString(groupIDBytes), hex.EncodeToString(qtyOrFlags))
+		log.Infof("group out %v:%s, %s %s", txHash, fmt.Sprint(vout), hex.EncodeToString(groupIDBytes), hex.EncodeToString(qtyOrFlags))
 
 		return dbPutGroupIndexEntry(idx, dbTx, &dbGroupIndexEntry{
 			outpointID: outpointID,

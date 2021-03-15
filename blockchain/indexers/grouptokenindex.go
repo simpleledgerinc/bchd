@@ -82,7 +82,7 @@ var (
 //
 // The serialized format for the keys and values in the slp index bucket is:
 //
-//   <txhash> = <group id uint32><qty or flags>
+//   <txhash><vout> = <group id uint32><qty or flags>
 //
 //   Field           	Type              Size
 //   <txhash><vout>     []bytes   	      36 bytes (32 byte hash + 4 byte uint32 vout)

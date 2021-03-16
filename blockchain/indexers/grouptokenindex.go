@@ -77,6 +77,7 @@ var (
 //   ID               					uint32            4 bytes
 //	 Parent Group ID					uint32			  4 bytes (this is zero'd out if not a subgroup)
 //   Group ID                   		[]bytes   		  32 bytes normally, but this can be less if there is a parent group
+//   (future) Genesis OP_RETURN         []bytes           varies, up to 223 bytes currently allowed in OP_RETURN space
 //   -----
 //   Max: X bytes max
 //
@@ -248,42 +249,57 @@ type GroupTxEntry struct {
 	GroupID       uint32
 	ParentGroupID uint32
 	QtyOrFlags    []byte
+	GroupIDBytes  []byte
 }
 
 // dbFetchGroupIndexEntry uses an existing database transaction to fetch the serialized slp
 // index entry for the provided transaction hash.  When there is no entry for the provided hash,
 // nil will be returned for the both the entry and the error.
-func dbFetchGroupIndexEntry(dbTx database.Tx, txHash *chainhash.Hash) (*GroupTxEntry, error) {
+func dbFetchGroupIndexEntry(dbTx database.Tx, outpointID []byte) (*GroupTxEntry, error) {
 	// Load the record from the database and return now if it doesn't exist.
 	GroupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
-	serializedData := GroupIndex.Get(txHash[:])
+	serializedData := GroupIndex.Get(outpointID)
 	if len(serializedData) == 0 {
-		return nil, fmt.Errorf("slp entry does not exist %v", txHash)
+		return nil, fmt.Errorf("slp entry does not exist %v", outpointID)
 	}
 
 	// Ensure the serialized data has enough bytes to properly deserialize.
-	// The minimum possible entry size is 4 + 1 + 2 = 7
-	if len(serializedData) < 6 {
+	// The minimum possible entry size is 4 + 4 + 2 = 10
+	if len(serializedData) < 10 {
 		return nil, database.Error{
 			ErrorCode: database.ErrCorruption,
 			Description: fmt.Sprintf("corrupt slp index "+
-				"entry for %s", txHash),
+				"entry for %s", outpointID),
 		}
 	}
+
 	entry := &GroupTxEntry{
-		GroupID: byteOrder.Uint32(serializedData[0:4]),
+		GroupID:       byteOrder.Uint32(serializedData[0:4]),
+		ParentGroupID: 0,
+		QtyOrFlags:    serializedData[5:],
 	}
 
-	// Check to see if this is a subgroup, if so then go look up the parent group id
-	if serializedData[4] > 0 {
-		GroupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.GroupID)
+	var groupIDBytes []byte
+
+	// if parentID is > 0 this is a subgroup
+	parentID := byteOrder.Uint32(serializedData[4:8])
+	if parentID > 0 {
+		parentGroupMetadata, err := dbFetchGroupMetadataByID(dbTx, parentID)
 		if err != nil {
 			return nil, err
 		}
-		entry.ParentGroupID = GroupMetadata.parentGroupID
+		entry.ParentGroupID = parentGroupMetadata.parentGroupID
+		groupIDBytes = append(groupIDBytes, parentGroupMetadata.nonfinalGroupID...)
 	}
 
-	entry.QtyOrFlags = serializedData[5:]
+	// get group id bytes for this group id
+	groupMetadata, err := dbFetchGroupMetadataByID(dbTx, entry.GroupID)
+	if err != nil {
+		return nil, err
+	}
+
+	entry.GroupIDBytes = append(groupIDBytes, groupMetadata.nonfinalGroupID...)
+
 	return entry, nil
 }
 
@@ -466,6 +482,10 @@ func (idx *GroupIndex) ConnectBlock(dbTx database.Tx, block *bchutil.Block, stxo
 type AddGroupTxIndexEntryHandler func(*chainhash.Hash, uint32, []byte, []byte) error
 
 // CheckGroupTx checks a transaction for validity and adds valid transactions to the db
+//
+// TODO: ? loop through inputs to delete them from the group index so that we only maintained
+//       an unspent set of group related data ?
+//
 func CheckGroupTx(tx *wire.MsgTx, putTxIndexEntry AddGroupTxIndexEntryHandler) (bool, error) {
 
 	txHash := tx.TxHash()
@@ -560,14 +580,18 @@ func (idx *GroupIndex) DisconnectBlock(dbTx database.Tx, block *bchutil.Block, s
 // will be returned for the both the entry and the error, which would mean the transaction is invalid
 //
 // This function is safe for concurrent access.
-func (idx *GroupIndex) GetGroupIndexEntry(dbTx database.Tx, hash *chainhash.Hash) (*GroupTxEntry, error) {
+func (idx *GroupIndex) GetGroupIndexEntry(dbTx database.Tx, hash []byte, vout uint32) (*GroupTxEntry, error) {
 	// if entry, ok := idx.cache.GetGroupTxEntry(hash); ok {
 	// 	log.Debugf("using slp txn entry cache for txid %v", hash)
 	// 	return &entry, nil
 	// }
 
+	outpointID := make([]byte, 36)
+	copy(outpointID, hash)
+	byteOrder.PutUint32(outpointID[32:], vout)
+
 	// fallback to fetch entry from db
-	entry, err := dbFetchGroupIndexEntry(dbTx, hash)
+	entry, err := dbFetchGroupIndexEntry(dbTx, outpointID)
 	if err != nil {
 		return nil, err
 	}

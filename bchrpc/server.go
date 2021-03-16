@@ -1093,6 +1093,44 @@ func (s *GrpcServer) GetAddressUnspentOutputs(ctx context.Context, req *pb.GetAd
 		}
 	}
 
+	if s.groupIndex != nil {
+		for _, txo := range utxos {
+			err := s.db.View(func(dbTx database.Tx) error {
+				entry, err := s.groupIndex.GetGroupIndexEntry(dbTx, txo.Outpoint.Hash, txo.Outpoint.Index)
+				if err != nil {
+					return err
+				}
+
+				txo.SlpToken = &pb.SlpToken{
+					TokenId:   entry.GroupIDBytes,
+					TokenType: pb.SlpTokenType_VX_GROUP,
+					// FIXME: Address: f(txo.PubkeyScript),
+				}
+
+				// unmarshal the group output
+				groupOutput, err := txscript.ParseOpGroupOutput(txo.PubkeyScript)
+				if err != nil {
+					return err
+				}
+
+				if groupOutput.IsAuthority() {
+					txo.SlpToken.SlpAction = pb.SlpAction_SLP_X_GROUP_AUTHORITY_OUTPUT
+				} else {
+					amt, err := groupOutput.Amount()
+					if err != nil {
+						log.Critical(err)
+						return err
+					}
+					txo.SlpToken.Amount = *amt
+				}
+				return nil
+			})
+			if err != nil {
+				log.Debug(err)
+			}
+		}
+	}
+
 	resp := &pb.GetAddressUnspentOutputsResponse{
 		Outputs:       utxos,
 		TokenMetadata: tokenMetadata,

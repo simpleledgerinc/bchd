@@ -2003,12 +2003,14 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 	if sp == nil || !sp.Connected() {
 		return false
 	}
+	srvrLog.Info("handleAddPeerMsg - is connected")
 
 	// Disconnect peers with unwanted user agents.
 	if sp.HasUndesiredUserAgent(s.agentBlacklist, s.agentWhitelist) {
 		sp.Disconnect()
 		return false
 	}
+	srvrLog.Info("handleAddPeerMsg - user agent OK")
 
 	// Ignore new peers if we're shutting down.
 	if atomic.LoadInt32(&s.shutdown) != 0 {
@@ -2016,17 +2018,18 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 		sp.Disconnect()
 		return false
 	}
+	srvrLog.Info("handleAddPeerMsg - no shutdown")
 
 	// Disconnect banned peers.
 	host, _, err := net.SplitHostPort(sp.Addr())
 	if err != nil {
-		srvrLog.Debugf("can't split hostport %v", err)
+		srvrLog.Infof("can't split hostport %v", err)
 		sp.Disconnect()
 		return false
 	}
 	if banEnd, ok := state.banned[host]; ok {
 		if time.Now().Before(banEnd) {
-			srvrLog.Debugf("Peer %s is banned for another %v - disconnecting",
+			srvrLog.Infof("Peer %s is banned for another %v - disconnecting",
 				host, time.Until(banEnd))
 			sp.Disconnect()
 			return false
@@ -2035,6 +2038,7 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 		srvrLog.Infof("Peer %s is no longer banned", host)
 		delete(state.banned, host)
 	}
+	srvrLog.Info("handleAddPeerMsg - not banned")
 
 	// Limit max number of total peers per ip.
 	if state.CountIP(host) >= cfg.MaxPeersPerIP {
@@ -2044,6 +2048,7 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 
 		return false
 	}
+	srvrLog.Info("handleAddPeerMsg - peer count per ip OK")
 
 	// Limit max number of total peers.
 	if state.Count() >= cfg.MaxPeers {
@@ -2054,9 +2059,10 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 		// they should be rescheduled.
 		return false
 	}
+	srvrLog.Info("handleAddPeerMsg - peer count total OK")
 
 	// Add the new peer and start it.
-	srvrLog.Debugf("New peer %s", sp)
+	srvrLog.Infof("New peer %s", sp)
 
 	if sp.Inbound() {
 		state.inboundPeers[sp.ID()] = sp
@@ -2071,15 +2077,18 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 			state.connectionCount[host]++
 		}
 	}
+	srvrLog.Info("handleAddPeerMsg - inbound/outboud updates completed")
 
 	// Update the address' last seen time if the peer has acknowledged
 	// our version and has sent us its version as well.
 	if sp.VerAckReceived() && sp.VersionKnown() && sp.NA() != nil {
 		s.addrManager.Connected(sp.NA())
 	}
+	srvrLog.Info("handleAddPeerMsg - address last seen updated")
 
 	// Signal the sync manager this peer is a new sync candidate.
 	s.syncManager.NewPeer(sp.Peer, nil)
+	srvrLog.Info("handleAddPeerMsg - signalled sync mngr")
 
 	// Update the address manager and request known addresses from the
 	// remote peer for outbound connections. This is skipped when running on
@@ -2111,7 +2120,8 @@ func (s *server) handleAddPeerMsg(state *peerState, sp *serverPeer) bool {
 		// Mark the address as a known good address.
 		s.addrManager.Good(sp.NA())
 	}
-
+	srvrLog.Info("handleAddPeerMsg- fetched known addresses from outbound peer")
+	srvrLog.Info("handleAddPeerMsg - return")
 	return true
 }
 

@@ -2630,38 +2630,47 @@ out:
 		select {
 		// New peers connected to the server.
 		case p := <-s.newPeers:
+			srvrLog.Info("peerHandler() channel s.newPeers")
 			s.handleAddPeerMsg(state, p)
 
 		// Disconnected peers.
 		case p := <-s.donePeers:
+			srvrLog.Info("peerHandler() channel s.donePeers")
 			s.handleDonePeerMsg(state, p)
 
 		// Block accepted in mainchain or orphan, update peer height.
 		case umsg := <-s.peerHeightsUpdate:
+			srvrLog.Info("peerHandler() channel s.peerHeightsUpdate")
 			s.handleUpdatePeerHeights(state, umsg)
 
 		// Peer to ban.
 		case p := <-s.banPeers:
+			srvrLog.Info("peerHandler() channel s.banPeers")
 			s.handleBanPeerMsg(state, p)
 
 		// New inventory to potentially be relayed to other peers.
 		case invMsg := <-s.relayInv:
+			srvrLog.Info("peerHandler() channel s.relayInv")
 			s.handleRelayInvMsg(state, invMsg)
 
 		// A compact block to relay. This should only be sent to peers
 		// which want compact blocks and with version >= 70015
 		case msgCmpctBlock := <-s.relayCmpctBlock:
+			srvrLog.Info("peerHandler() channel s.relayCmpctBlock")
 			s.handleRelayCmpctBlock(state, msgCmpctBlock)
 
 		// Message to broadcast to all connected peers except those
 		// which are excluded by the message.
 		case bmsg := <-s.broadcast:
+			srvrLog.Info("peerHandler() channel s.broadcast")
 			s.handleBroadcastMsg(state, &bmsg)
 
 		case qmsg := <-s.query:
+			srvrLog.Info("peerHandler() channel s.query")
 			s.handleQuery(state, qmsg)
 
 		case amsg := <-s.maybeAddDirectRelayPeer:
+			srvrLog.Info("peerHandler() channel s.maybeAddDirectRelayPeer")
 			if len(state.directRelayPeers) < maxDirectRelayPeers {
 				state.directRelayPeers[amsg.peer.ID()] = amsg.peer
 				amsg.response <- true
@@ -2670,6 +2679,7 @@ out:
 			}
 
 		case <-s.quit:
+			srvrLog.Info("peerHandler() channel s.quit")
 			// Disconnect all peers on server shutdown.
 			state.forAllPeers(func(sp *serverPeer) {
 				srvrLog.Tracef("Shutdown peer %s", sp)

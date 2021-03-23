@@ -164,7 +164,7 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 	defer b.chainLock.Unlock()
 
 	blockHash := block.Hash()
-	log.Tracef("Processing block %v", blockHash)
+	log.Infof("Processing block %v", blockHash)
 
 	if !flags.HasFlag(BFNoDupBlockCheck) {
 		// The block must not already exist in the main chain or side chains.
@@ -184,8 +184,12 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 		}
 	}
 
+	log.Infof("Processing block %v - after flags.HasFlag(BFNoDupBlockCheck)", blockHash)
+
 	prevHash := &block.MsgBlock().Header.PrevBlock
 	prevNode := b.index.LookupNode(prevHash)
+
+	log.Infof("Processing block %v - after prevNode lookup", blockHash)
 
 	if prevNode != nil {
 		block.SetHeight(prevNode.height + 1)
@@ -200,6 +204,7 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 	if err != nil {
 		return false, false, err
 	}
+	log.Infof("Processing block %v - after checkBlockSanity", blockHash)
 
 	// Handle orphan blocks.
 	prevHashExists, err := b.blockExists(prevHash)
@@ -212,6 +217,7 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 
 		return false, true, nil
 	}
+	log.Infof("Processing block %v - after blockExists", blockHash)
 
 	// The block has passed all context independent checks and appears sane
 	// enough to potentially accept it into the block chain.
@@ -219,6 +225,7 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 	if err != nil {
 		return false, false, err
 	}
+	log.Infof("Processing block %v - after maybeAcceptBlock", blockHash)
 
 	// Accept any orphan blocks that depend on this block (they are
 	// no longer orphans) and repeat for those accepted blocks until
@@ -228,7 +235,7 @@ func (b *BlockChain) ProcessBlock(block *bchutil.Block, flags BehaviorFlags) (bo
 		return false, false, err
 	}
 
-	log.Debugf("Accepted block %v", blockHash)
+	log.Infof("Accepted block %v", blockHash)
 
 	return isMainChain, false, nil
 }

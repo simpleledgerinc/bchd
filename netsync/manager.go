@@ -785,6 +785,7 @@ func (sm *SyncManager) current() bool {
 
 // handleBlockMsg handles block messages from all peers.
 func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
+	log.Info("handleBlockMsg start")
 	peer := bmsg.peer
 	state, exists := sm.peerStates[peer]
 	if !exists {
@@ -807,6 +808,7 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			return
 		}
 	}
+	log.Info("handleBlockMsg block exists")
 
 	// When in headers-first mode, if the block matches the hash of the
 	// first header in the list of headers that are being fetched, it's
@@ -831,12 +833,14 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			}
 		}
 	}
+	log.Info("handleBlockMsg headersFirstMode")
 
 	// Remove block from request maps. Either chain will know about it and
 	// so we shouldn't have any more instances of trying to fetch it, or we
 	// will fail the insert and thus we'll retry next time we get an inv.
 	delete(state.requestedBlocks, *blockHash)
 	delete(sm.requestedBlocks, *blockHash)
+	log.Info("handleBlockMsg deleted blockHash from requestedBlocks")
 
 	// Process the block to include validation, best chain selection, orphan
 	// handling, etc.
@@ -864,6 +868,7 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		peer.PushRejectMsg(wire.CmdBlock, code, reason, blockHash, false)
 		return
 	}
+	log.Info("handleBlockMsg ProcessBlock complete")
 
 	// Meta-data about the new block this peer is reporting. We use this
 	// below to update this peer's lastest block height and the heights of
@@ -913,6 +918,8 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			sm.syncPeerState.lastBlockTime = time.Now()
 		}
 
+		log.Info("handleBlockMsg pre-LogBlockHeight")
+
 		// When the block is not an orphan, log information about it and
 		// update the chain state.
 		sm.progressLogger.LogBlockHeight(bmsg.block, sm.SyncHeight(), sm.chain)
@@ -926,6 +933,7 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		// Clear the rejected transactions.
 		sm.rejectedTxns = make(map[chainhash.Hash]struct{})
 	}
+	log.Info("handleBlockMsg - after Request the parents for the orphan block")
 
 	// Update the block height for this peer. But only send a message to
 	// the server for updating peer heights if this is an orphan or our
@@ -939,6 +947,8 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		}
 	}
 
+	log.Info("handleBlockMsg - after Update the block height for this peer. But only send a message to")
+
 	// If we are not in headers first mode, it's a good time to periodically
 	// flush the blockchain cache because we don't expect new blocks immediately.
 	// After that, there is nothing more to do.
@@ -948,6 +958,8 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		}
 		return
 	}
+
+	log.Info("handleBlockMsg - after If we are not in headers first mode, it's a good time to periodically")
 
 	// This is headers-first mode, so if the block is not a checkpoint
 	// request more blocks using the header list when the request queue is
@@ -959,6 +971,8 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		}
 		return
 	}
+
+	log.Info("handleBlockMsg - after This is headers-first mode, so if the block is not a checkpoint")
 
 	// This is headers-first mode and the block is a checkpoint.  When
 	// there is a next checkpoint, get the next round of headers by asking
@@ -984,6 +998,8 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 		return
 	}
 
+	log.Info("handleBlockMsg - after This is headers-first mode and the block is a checkpoint.")
+
 	// This is headers-first mode, the block is a checkpoint, and there are
 	// no more checkpoints, so switch to normal mode by requesting blocks
 	// from the block after this one up to the end of the chain (zero hash).
@@ -997,6 +1013,9 @@ func (sm *SyncManager) handleBlockMsg(bmsg *blockMsg) {
 			peer.Addr(), err)
 		return
 	}
+
+	log.Info("handleBlockMsg - done")
+
 }
 
 // handleBlockError removes the request block from the queues so it can be request

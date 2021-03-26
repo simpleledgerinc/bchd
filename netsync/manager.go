@@ -1678,15 +1678,23 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 // NewPeer informs the sync manager of a newly active peer.
 func (sm *SyncManager) NewPeer(peer *peerpkg.Peer, done chan struct{}) {
 	// Ignore peer if not connected.
+	log.Info("NewPeer - check connected")
 	if !peer.Connected() {
+		log.Info("NewPeer - not connected")
 		return
 	}
+	log.Info("NewPeer - connected")
 
+	log.Info("NewPeer - check shutdown")
 	// Ignore if we are shutting down.
 	if atomic.LoadInt32(&sm.shutdown) != 0 {
+		log.Info("NewPeer - detected shutdown")
 		done <- struct{}{}
 		return
 	}
+	log.Info("NewPeer - no shutdown")
+
+	log.Info("NewPeer - add new peer msg to sm.msgChan")
 	sm.msgChan <- &newPeerMsg{peer: peer, reply: done}
 }
 

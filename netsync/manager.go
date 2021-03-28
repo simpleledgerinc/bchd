@@ -1668,7 +1668,15 @@ func (sm *SyncManager) NewPeer(peer *peerpkg.Peer, done chan struct{}) {
 		done <- struct{}{}
 		return
 	}
-	sm.msgChan <- &newPeerMsg{peer: peer, reply: done}
+
+	// select statement prevents sm.msgChan from blocking if full
+	// or if blockHandler is trying to play catch up.
+	select {
+	case sm.msgChan <- &newPeerMsg{peer: peer, reply: done}:
+	default:
+		peer.Disconnect()
+		log.Warn("blockHandler message channel is full, disconnected from new peer")
+	}
 }
 
 // QueueTx adds the passed transaction message and peer to the block handling

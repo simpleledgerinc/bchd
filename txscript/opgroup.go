@@ -11,24 +11,24 @@ import (
 // TokenType is an uint16 representing the slp version type
 type TokenType uint16
 
-// Flag holds the value/string representation for an authority or group flag
-type Flag struct {
-	value int
-	name  string
-}
-
 const (
-	// TokenTypeOpGroup version type used for ParseResult.TokenType
-	TokenTypeOpGroup TokenType = 10
+	// TokenTypeOpGroup version type used for group outputs with no slp v2 association
+	TokenTypeOpGroup TokenType = 0
+
+	// TokenTypeOpGroup version type used for group outputs with slp v2 genesis metadata
+	TokenTypeOpGroupSlpV2 TokenType = 2
+
+	// TokenTypeOpGroup version type used for group outputs with slp v2 nft genesis metadata & is a valid nft
+	TokenTypeOpGroupSlpV2Nft TokenType = 66
 
 	// IsAuthorityFlag flag is used to control whether
-	// or not the value associated with the OP_GROUP
+	// or not the value associated with the op_group
 	// value in scriptPubKey is a token quantity or
 	// authority flag(s)
 	//
 	// From the spec:
-	// This is an authority UTXO, not a “normal”
-	// quantity holding UTXO
+	// This is an authority utxo, not a “normal”
+	// quantity holding utxo
 	//
 	IsAuthorityFlag = 1 << 63
 
@@ -42,32 +42,38 @@ const (
 	ReservedGroupFlags = 0xfffd
 )
 
+// Flag holds the value/string representation for an authority or group flag
+type Flag struct {
+	value int
+	name  string
+}
+
 var (
-	// MintAuthorityFlag
+	// MintAuthorityFlag ...
 	MintAuthorityFlag = Flag{
 		value: 1 << 62,
 		name:  "MintAuthority",
 	}
 
-	// MeltAuthorityFlag
+	// MeltAuthorityFlag ...
 	MeltAuthorityFlag = Flag{
 		value: 1 << 61,
 		name:  "MeltAuthority",
 	}
 
-	// BatonAuthorityFlag
+	// BatonAuthorityFlag ...
 	BatonAuthorityFlag = Flag{
 		value: 1 << 60,
 		name:  "BatonAuthority",
 	}
 
-	// RescriptAuthorityFlag
+	// RescriptAuthorityFlag ...
 	RescriptAuthorityFlag = Flag{
 		value: 1 << 59,
 		name:  "RescriptAuthority",
 	}
 
-	// SubgroupAuthorityFlag
+	// SubgroupAuthorityFlag ...
 	SubgroupAuthorityFlag = Flag{
 		value: 1 << 58,
 		name:  "SubgroupAuthority",
@@ -86,21 +92,22 @@ var (
 	// ReservedAuthorityFlags ...
 	ReservedAuthorityFlags = AllAuthorityFlags ^ uint64(ActiveAuthorityFlags)
 
-	// GroupCovenant
+	// GroupCovenant ...
 	GroupCovenantFlag = Flag{
 		value: 1,
 		name:  "Covenant",
 	}
 
-	// GroupHoldsBch
+	// GroupHoldsBch ...
 	GroupHoldsBchFlag = Flag{
 		value: 2,
 		name:  "HoldsBch",
 	}
 )
 
-// GroupOutput is an unmarshalled OP_GROUP ParseResult
+// GroupOutput is an unmarshalled op_group ParseResult
 type GroupOutput struct {
+	tokenType       TokenType
 	groupID         []byte
 	quantityOrFlags uint64
 	groupFlags      uint16
@@ -108,7 +115,7 @@ type GroupOutput struct {
 
 // TokenType returns the TokenType per the ParserResult interface
 func (r GroupOutput) TokenType() TokenType {
-	return TokenTypeOpGroup
+	return r.tokenType
 }
 
 // TokenID returns the TokenID per the ParserResult interface
@@ -119,44 +126,36 @@ func (r GroupOutput) TokenID() []byte {
 // IsAuthority returns a boolean indicating whether or not this
 // group output is an authority output
 func (r GroupOutput) IsAuthority() bool {
-	return r.quantityOrFlags&uint64(IsAuthorityFlag) == 1
+	log.Infof("IsAuthority - %s", fmt.Sprint(r.quantityOrFlags))
+	return r.quantityOrFlags&uint64(IsAuthorityFlag) > 0
 }
 
 // Amount of the output
-func (r GroupOutput) Amount() (*uint64, error) {
-	return nil, errors.New("unimplemented")
+func (r GroupOutput) Amount() uint64 {
+	if r.IsAuthority() {
+		return 0
+	}
+	return r.quantityOrFlags
 }
 
 // IsMintAuthority ...
-func (r GroupOutput) IsMintAuthority() (bool, error) {
-	if !r.IsAuthority() {
-		return false, errors.New("not an authority output")
-	}
-	return r.quantityOrFlags&uint64(MintAuthorityFlag.value) == 1, nil
+func (r GroupOutput) IsMintAuthority() bool {
+	return r.quantityOrFlags&uint64(MintAuthorityFlag.value) > 0
 }
 
 // IsMeltAuthority ...
-func (r GroupOutput) IsMeltAuthority() (bool, error) {
-	if !r.IsAuthority() {
-		return false, errors.New("not an authority output")
-	}
-	return r.quantityOrFlags&uint64(MeltAuthorityFlag.value) == 1, nil
+func (r GroupOutput) IsMeltAuthority() bool {
+	return r.quantityOrFlags&uint64(MeltAuthorityFlag.value) > 0
 }
 
 // IsSubGroupAuthority ...
-func (r GroupOutput) IsSubGroupAuthority() (bool, error) {
-	if !r.IsAuthority() {
-		return false, errors.New("not an authority output")
-	}
-	return r.quantityOrFlags&uint64(SubgroupAuthorityFlag.value) == 1, nil
+func (r GroupOutput) IsSubGroupAuthority() bool {
+	return r.quantityOrFlags&uint64(SubgroupAuthorityFlag.value) > 0
 }
 
 // IsRescriptAuthority ...
-func (r GroupOutput) IsRescriptAuthority() (bool, error) {
-	if !r.IsAuthority() {
-		return false, errors.New("not an authority output")
-	}
-	return r.quantityOrFlags&uint64(RescriptAuthorityFlag.value) == 1, nil
+func (r GroupOutput) IsRescriptAuthority() bool {
+	return r.quantityOrFlags&uint64(RescriptAuthorityFlag.value) > 0
 }
 
 // AuthorityFlags returns authority flags associated with this output. An error
@@ -173,23 +172,23 @@ func (r GroupOutput) AuthorityFlags() ([]Flag, error) {
 	}
 
 	// check Mint authority
-	if hasFlag, _ := r.IsMintAuthority(); hasFlag {
+	if r.IsMintAuthority() {
 		flags = append(flags, MintAuthorityFlag)
 	}
 
 	// check Melt authority
-	if hasFlag, _ := r.IsMeltAuthority(); hasFlag {
+	if r.IsMeltAuthority() {
 		flags = append(flags, MeltAuthorityFlag)
 	}
 
 	// check Subgroup authority
-	if hasFlag, _ := r.IsSubGroupAuthority(); hasFlag {
+	if r.IsSubGroupAuthority() {
 		flags = append(flags, SubgroupAuthorityFlag)
 	}
 
 	// check Rescript authority
-	if hasFlag, _ := r.IsRescriptAuthority(); hasFlag {
-		// TODO: check group flags for covenant flag
+	if r.IsRescriptAuthority() {
+		// TODO: sanity check group flags for covenant flag?
 		flags = append(flags, RescriptAuthorityFlag)
 	}
 
@@ -202,12 +201,12 @@ func (r GroupOutput) AuthorityFlags() ([]Flag, error) {
 
 // IsGroupBch ...
 func (r GroupOutput) IsGroupBch() bool {
-	return r.groupFlags&GroupIsBchFlag == 1
+	return r.groupFlags&GroupIsBchFlag > 0
 }
 
 // IsGroupCovenant ...
 func (r GroupOutput) IsGroupCovenant() bool {
-	return r.groupFlags&uint16(GroupCovenantFlag.value) == 1
+	return r.groupFlags&uint16(GroupCovenantFlag.value) > 0
 }
 
 // GroupFlags returns group flags associated with the token id involved in
@@ -230,12 +229,40 @@ func (r GroupOutput) GroupFlags() ([]Flag, error) {
 	return flags, nil
 }
 
-// ParseOpGroupScript
-func ParseOpGroupOutput(scriptPubKey []byte) (*GroupOutput, error) {
-	groupOutput := &GroupOutput{}
+// MarshalGroupOutput ...
+func MarshalGroupOutput(groupID []byte, groupVal []byte) (*GroupOutput, error) {
+	if len(groupID) < 32 {
+		return nil, fmt.Errorf("invalid group id %s", hex.EncodeToString(groupID))
+	}
+
+	groupOutput := &GroupOutput{
+		groupID:    groupID,
+		groupFlags: binary.LittleEndian.Uint16(groupID[30:32]),
+	}
+
+	valLen := len(groupVal)
+	switch valLen {
+	case 2:
+		groupOutput.quantityOrFlags = uint64(binary.LittleEndian.Uint16(groupVal))
+		break
+	case 4:
+		groupOutput.quantityOrFlags = uint64(binary.LittleEndian.Uint32(groupVal))
+		break
+	case 8:
+		groupOutput.quantityOrFlags = uint64(binary.LittleEndian.Uint64(groupVal))
+		break
+	default:
+		return nil, fmt.Errorf("group value is not 2, 4, or 8 bytes, got %s", hex.EncodeToString(groupVal))
+	}
+
+	return groupOutput, nil
+}
+
+// ParseGroupOutputScript ...
+func ParseGroupOutputScript(scriptPubKey []byte) (*GroupOutput, error) {
 
 	// parse the script into its data push components
-	// and check that OP_GROUP is at index 2.
+	// and check that op_group is at index 2.
 	disassembledScript, err := DisasmString(scriptPubKey)
 	if err != nil {
 		return nil, fmt.Errorf("group output script disasm failed: %v", err)
@@ -248,33 +275,27 @@ func ParseOpGroupOutput(scriptPubKey []byte) (*GroupOutput, error) {
 		return nil, fmt.Errorf("script is not long enough")
 	}
 
-	// group id is at index 0
-	if len(splitDisassembledScript[0]) < 32*2 {
-		return nil, fmt.Errorf("OP_GROUP id is less than 32 bytes!")
+	// group opcode is at index 3
+	if splitDisassembledScript[2] != "OP_GROUP" {
+		return nil, fmt.Errorf("group opcode not detected in output script!")
 	}
+
+	// group id is at index 0
 	groupID, err := hex.DecodeString(splitDisassembledScript[0])
 	if err != nil {
 		return nil, fmt.Errorf("couldn't decode group id: %v", err)
 	}
-	groupOutput.groupID = groupID
-	groupOutput.groupFlags = binary.LittleEndian.Uint16(groupID[31:33])
 
-	// group value conforms to length requirement
-	valLen := len(splitDisassembledScript[1])
-	if valLen != 4 && valLen != 8 && valLen != 16 {
-		return nil, fmt.Errorf("OP_GROUP value is not 2, 4, or 8 bytes!")
+	if len(groupID) < 32 {
+		return nil, fmt.Errorf("group opcode id is less than 32 bytes")
 	}
 
 	groupVal, err := hex.DecodeString(splitDisassembledScript[1])
 	if err != nil {
 		return nil, fmt.Errorf("couldn't decode group value: %v", err)
 	}
-	groupOutput.quantityOrFlags = binary.LittleEndian.Uint64(groupVal)
 
-	// group opcode is at index 3
-	if splitDisassembledScript[2] != "OP_GROUP" {
-		return nil, fmt.Errorf("OP_GROUP not detected in output script!")
-	}
+	log.Infof("groupVal %s", splitDisassembledScript[1])
 
-	return groupOutput, nil
+	return MarshalGroupOutput(groupID, groupVal)
 }

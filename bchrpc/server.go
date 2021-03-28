@@ -1096,34 +1096,8 @@ func (s *GrpcServer) GetAddressUnspentOutputs(ctx context.Context, req *pb.GetAd
 	if s.groupIndex != nil {
 		for _, txo := range utxos {
 			err := s.db.View(func(dbTx database.Tx) error {
-				entry, err := s.groupIndex.GetGroupIndexEntry(dbTx, txo.Outpoint.Hash, txo.Outpoint.Index)
-				if err != nil {
-					return err
-				}
-
-				txo.SlpToken = &pb.SlpToken{
-					TokenId:   entry.GroupIDBytes,
-					TokenType: pb.SlpTokenType_VX_GROUP,
-					// FIXME: Address: f(txo.PubkeyScript),
-				}
-
-				// unmarshal the group output
-				groupOutput, err := txscript.ParseOpGroupOutput(txo.PubkeyScript)
-				if err != nil {
-					return err
-				}
-
-				if groupOutput.IsAuthority() {
-					txo.SlpToken.SlpAction = pb.SlpAction_SLP_X_GROUP_AUTHORITY_OUTPUT
-				} else {
-					amt, err := groupOutput.Amount()
-					if err != nil {
-						log.Critical(err)
-						return err
-					}
-					txo.SlpToken.Amount = *amt
-				}
-				return nil
+				txo.SlpToken, err = s.getGroupToken(txo.Outpoint.Hash, txo.Outpoint.Index, txo.PubkeyScript)
+				return err
 			})
 			if err != nil {
 				log.Debug(err)
@@ -1504,7 +1478,7 @@ func (s *GrpcServer) GetSlpTrustedValidation(ctx context.Context, req *pb.GetSlp
 	return resp, nil
 }
 
-func isMaybeSlpTransaction(txn *wire.MsgTx) bool {
+func maybeContainsSlpMetadata(txn *wire.MsgTx) bool {
 	if len(txn.TxOut) > 0 {
 		bchTagIDHex, _ := hex.DecodeString("534c5000")
 		return bytes.Contains(txn.TxOut[0].PkScript, bchTagIDHex)
@@ -1571,7 +1545,7 @@ func (s *GrpcServer) checkTransactionSlpValidity(msgTx *wire.MsgTx, requiredBurn
 	slpMd, err := v1parser.ParseSLP(msgTx.TxOut[0].PkScript)
 	if err != nil {
 		// check if transaction output index 0 contained slp magic bytes
-		if isMaybeSlpTransaction(msgTx) {
+		if maybeContainsSlpMetadata(msgTx) {
 			invalidReason := fmt.Sprintf("error parsing scriptPubKey as slp metadata, %v", err)
 			if disableErrorResponse {
 				return slpInvalid(invalidReason), nil
@@ -2758,6 +2732,78 @@ func (s *GrpcServer) getDecimalsForTokenID(tokenID chainhash.Hash) (int, error) 
 	return decimals, nil
 }
 
+func (s *GrpcServer) getGroupToken(hash []byte, vout uint32, scriptPubKey []byte) (*pb.SlpToken, error) {
+
+	if s.groupIndex == nil {
+		return nil, errors.New("group index is disabled")
+	}
+
+	var entry *indexers.GroupTxEntry
+
+	// FIXME: add a lru cache for recently fetched group token items
+
+	err := s.db.View(func(dbTx database.Tx) error {
+		var err error
+		entry, err = s.groupIndex.GetGroupIndexEntry(dbTx, hash[:], vout)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	log.Infof("entry.QtyOrFlags %s", hex.EncodeToString(entry.QtyOrFlags))
+
+	// unmarshal the db GroupTxEntry as a GroupOutput
+	groupOut, err := txscript.MarshalGroupOutput(entry.GroupIDBytes, entry.QtyOrFlags)
+	if err != nil {
+		return nil, err
+	}
+
+	tok := &pb.SlpToken{
+		TokenId:   groupOut.TokenID(),
+		TokenType: pb.SlpTokenType(groupOut.TokenType()),
+	}
+
+	if groupOut.IsMintAuthority() {
+		tok.GroupAuthorityFlags = append(tok.GroupAuthorityFlags, pb.GroupAuthorityFlag_MINT)
+	}
+
+	if groupOut.IsMeltAuthority() {
+		tok.GroupAuthorityFlags = append(tok.GroupAuthorityFlags, pb.GroupAuthorityFlag_MELT)
+	}
+
+	if groupOut.IsSubGroupAuthority() {
+		tok.GroupAuthorityFlags = append(tok.GroupAuthorityFlags, pb.GroupAuthorityFlag_SUBGROUP)
+	}
+
+	if groupOut.IsRescriptAuthority() {
+		tok.GroupAuthorityFlags = append(tok.GroupAuthorityFlags, pb.GroupAuthorityFlag_RESCRIPT)
+	}
+
+	tok.Amount = groupOut.Amount()
+
+	// TODO: tok.Decimals is not set since we're not tracking op_return metadata yet
+
+	if groupOut.IsAuthority() {
+		tok.SlpAction = pb.SlpAction_SLP_V2_AUTHORITY_OUTPUT
+	} else {
+		tok.SlpAction = pb.SlpAction_SLP_V2_SEND_OUTPUT
+	}
+
+	// set the slp address string (slp addr format isn't necessary)
+	if scriptPubKey != nil {
+		_, addrs, _, err := txscript.ExtractPkScriptAddrs(scriptPubKey, s.chainParams)
+		if err == nil && len(addrs) == 1 {
+			tok.Address = addrs[0].String()
+		}
+	}
+
+	return tok, nil
+}
+
 // getSlpToken fetches an SlpToken object leveraging a cache of SlpIndexEntry items
 func (s *GrpcServer) getSlpToken(hash *chainhash.Hash, vout uint32, scriptPubKey []byte) (*pb.SlpToken, error) {
 
@@ -2765,10 +2811,21 @@ func (s *GrpcServer) getSlpToken(hash *chainhash.Hash, vout uint32, scriptPubKey
 		return nil, errors.New("slpindex required")
 	}
 
-	if vout == 0 {
-		return nil, errors.New("vout=0 is out of range for getSlpToken")
+	// first check for a group token
+	slpToken, err := s.getGroupToken(hash[:], vout, scriptPubKey)
+	if err != nil {
+		log.Info(err)
 	}
 
+	if slpToken != nil {
+		return slpToken, nil
+	}
+
+	if vout == 0 {
+		return nil, errors.New("vout=0 is out of range for getSlpToken slp v1 token")
+	}
+
+	// if there is no group token then we'll check slp v1 index
 	entry, err := s.getSlpIndexEntry(hash)
 	if err != nil {
 		return nil, err
@@ -2854,7 +2911,7 @@ func (s *GrpcServer) getSlpToken(hash *chainhash.Hash, vout uint32, scriptPubKey
 		}
 	}
 
-	slpToken := &pb.SlpToken{
+	return &pb.SlpToken{
 		TokenId:     entry.TokenIDHash[:],
 		Amount:      amount,
 		IsMintBaton: isMintBaton,
@@ -2862,9 +2919,7 @@ func (s *GrpcServer) getSlpToken(hash *chainhash.Hash, vout uint32, scriptPubKey
 		SlpAction:   slpAction,
 		TokenType:   getTokenType(slpMsg.TokenType()),
 		Address:     address,
-	}
-
-	return slpToken, nil
+	}, nil
 }
 
 // slpEventHandler keeps the SlpEntryCache updated on transaction and block events
@@ -2901,7 +2956,7 @@ func (s *GrpcServer) slpEventHandler() {
 // where the subscriber event can be returned before the slp validation is completed.
 //
 func (s *GrpcServer) checkSlpTxOnEvent(tx *wire.MsgTx, eventStr string) bool {
-	if !isMaybeSlpTransaction(tx) {
+	if !maybeContainsSlpMetadata(tx) {
 		return false
 	}
 	log.Debugf("possible slp transaction added %v (%s)", tx.TxHash(), eventStr)
@@ -3068,8 +3123,8 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 		burnFlagSet = make(map[pb.SlpTransactionInfo_BurnFlags]struct{})
 	)
 
-	// always try to parse the transaction for slp attributes (even when slpindex is not enabled)
-	if isMaybeSlpTransaction(tx.MsgTx()) {
+	// always try to parse the transaction for slp op_return attributes (even when slpindex is not enabled)
+	if maybeContainsSlpMetadata(tx.MsgTx()) {
 		var err error
 		slpMsg, err = v1parser.ParseSLP(tx.MsgTx().TxOut[0].PkScript)
 		if err != nil {
@@ -3176,15 +3231,16 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 			}
 		}
 	} else {
+		// NOTE: this may be changed below if any group tokens are discovered in inputs or outputs
 		slpInfo.SlpAction = pb.SlpAction_NON_SLP
 	}
 
-	// check slp validity
+	// check slpv1 validity
 	if s.slpIndex != nil {
 		err := s.db.View(func(dbTx database.Tx) error {
 			entry, err := s.slpIndex.GetSlpIndexEntry(dbTx, txid)
 			if err != nil {
-				return fmt.Errorf("slp entry does not exist for %v", txid)
+				return fmt.Errorf("slp v1 entry does not exist for %v", txid)
 			}
 			slpInfo.ValidityJudgement = pb.SlpTransactionInfo_VALID
 
@@ -3235,6 +3291,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 	// loop through all inputs
 	for i, input := range tx.MsgTx().TxIn {
 
+		// check for slpv1 or group token
 		inputToken, err := s.getSlpToken(&input.PreviousOutPoint.Hash, input.PreviousOutPoint.Index, nil)
 		if err != nil {
 			log.Debugf("no slp token for input %v:%s, error: %v", input.PreviousOutPoint.Hash, fmt.Sprint(input.PreviousOutPoint.Index), err)
@@ -3271,6 +3328,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 	// loop through outputs
 	for i, output := range tx.MsgTx().TxOut {
 
+		// check for slpv1 or group token
 		outputToken, err := s.getSlpToken(tx.Hash(), uint32(i), output.PkScript)
 		if err != nil {
 			log.Debugf("no token stored for %v index: %v", txid, uint32(i))
@@ -3341,7 +3399,7 @@ func marshalTransaction(tx *bchutil.Tx, confirmations int32, blockHeader *wire.B
 					burnFlagSet[pb.SlpTransactionInfo_BURNED_INPUTS_OUTPUTS_TOO_HIGH] = struct{}{}
 				}
 			}
-		} else if isMaybeSlpTransaction(tx.MsgTx()) && inputAmount.Cmp(big.NewInt(0)) > 0 {
+		} else if maybeContainsSlpMetadata(tx.MsgTx()) && inputAmount.Cmp(big.NewInt(0)) > 0 {
 			burnFlagSet[pb.SlpTransactionInfo_BURNED_INPUTS_BAD_OPRETURN] = struct{}{}
 		}
 

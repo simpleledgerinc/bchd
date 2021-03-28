@@ -25,9 +25,9 @@ const (
 )
 
 var (
-	// groupTxIndexKey is the key of the transaction index and the db bucket used
+	// groupOutputIndexKey is the key of the transaction index and the db bucket used
 	// to house it.
-	groupTxIndexKey = []byte("grouptxbyhashidx")
+	groupOutputIndexKey = []byte("grouptxbyhashidx")
 
 	// groupIDByHashIndexBucketName is the name of the db bucket used to house
 	// the group id (bytes) -> group id (uint32) index.
@@ -60,8 +60,8 @@ var (
 // uint32 of each GroupID to the actual GroupID hash and the third maps that
 // unique transaction hash to unint32 GroupID and the tx's group value.
 //
-//
-// The serialized format for keys and values in the TokenID hash to ID bucket is:
+// groupIDByHashIndexBucketName:
+//   The serialized format for keys and values in the TokenID hash to ID bucket is:
 //   <group id hash> => <group id uint32>
 //
 //   Field           Type              Size
@@ -70,7 +70,9 @@ var (
 //   -----
 //   Total: 36 bytes
 //
-// The serialized format for keys and values in the ID to TokenID hash bucket is:
+//
+// groupMetadataByIDIndexBucketName:
+//   The serialized format for keys and values in the ID to TokenID hash bucket is:
 //   <group id uint32> => <parent id uint32><group or subgroup id bytes> <future group metadata>
 //
 //   Field            					Type              Size
@@ -81,7 +83,8 @@ var (
 //   -----
 //   Max: X bytes max
 //
-// The serialized format for the keys and values in the slp index bucket is:
+// groupTxIndexKey:
+//  The serialized format for the keys and values in the slp index bucket is:
 //
 //   <txhash><vout> = <group id uint32><qty or flags>
 //
@@ -142,6 +145,7 @@ func dbPutGroupMetadataIndexEntry(dbTx database.Tx, groupID uint32, metadata *Gr
 		}
 		copy(serializedGroupMetadata[4:], metadata.GroupIDBytes)
 	}
+	log.Debugf("dbPutGroupMetadataIndexEntry - %s -> %s", hex.EncodeToString(serializedID[:]), hex.EncodeToString(serializedGroupMetadata))
 	return metadataIndex.Put(serializedID[:], serializedGroupMetadata)
 }
 
@@ -156,7 +160,7 @@ func dbFetchGroupIDByHash(dbTx database.Tx, groupIDHash [32]byte) (uint32, error
 	if serializedID == nil {
 		return 0, errNoGroupIDHashEntry
 	}
-	return byteOrder.Uint32(serializedID), nil
+	return byteOrder.Uint32(serializedID[:4]), nil
 }
 
 // dbFetchGroupMetadataBySerializedID uses an existing database transaction to
@@ -197,20 +201,19 @@ type dbGroupIndexEntry struct {
 	qtyOrFlags []byte
 }
 
-// dbPutGroupIndexEntry uses an existing database transaction to update the
+// dbPutGroupOutputEntry uses an existing database transaction to update the
 // transaction index given the provided serialized data that is expected to have
 // been serialized putGroupIndexEntry.
-func dbPutGroupIndexEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupIndexEntry) error {
-	//txHash := entryInfo.tx.TxHash()
+func dbPutGroupOutputEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupIndexEntry) error {
+
+	// 0 is used to indicate no parent group id
+	var parentGroupID uint32
+	parentGroupID = 0
 
 	// get current tokenID uint32 for the tokenID hash, add new if needed
 	groupID, err := dbFetchGroupIDByHash(dbTx, sha256.Sum256(entryInfo.groupID))
 	if err != nil {
 		groupID = idx.curTokenID + 1
-
-		// 0 is used to indicate no parent group id
-		var parentGroupID uint32
-		parentGroupID = 0
 
 		// check that we don't have a subgroup created before a parent group id
 		// this could only happen if we don't topologically order the block transactions!
@@ -223,6 +226,8 @@ func dbPutGroupIndexEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupI
 			}
 		}
 
+		// create the metadata entry for the group, with the id reference to the parent group
+		// if this is a subgroup
 		err = dbPutGroupMetadataIndexEntry(dbTx, groupID,
 			&GroupMetadata{
 				GroupID:       groupID,
@@ -233,15 +238,27 @@ func dbPutGroupIndexEntry(idx *GroupIndex, dbTx database.Tx, entryInfo *dbGroupI
 		if err != nil {
 			return fmt.Errorf("failed to update db for token id: %v, this should never happen", entryInfo.groupID)
 		}
-		log.Infof("new group %s %s, id: %s, parentid: %s", hex.EncodeToString(entryInfo.groupID), hex.EncodeToString(entryInfo.qtyOrFlags), fmt.Sprint(groupID), fmt.Sprint(parentGroupID))
+		log.Infof("new group %s %s, id: %s, parent id: %s", hex.EncodeToString(entryInfo.groupID), hex.EncodeToString(entryInfo.qtyOrFlags), fmt.Sprint(groupID), fmt.Sprint(parentGroupID))
 		idx.curTokenID++
+	} else if len(entryInfo.groupID) > 32 {
+		// fetch the parent group id for the subgroup case where this is not the first
+		// transaction made
+		parentGroupID, err = dbFetchGroupIDByHash(dbTx, sha256.Sum256(entryInfo.groupID[:32]))
+		if err != nil {
+			msg := fmt.Sprintf("parent group id not found for group %s (this should never happen)", hex.EncodeToString(entryInfo.groupID))
+			log.Criticalf(msg)
+			return errors.New(msg)
+		}
 	}
 
-	target := make([]byte, 4+len(entryInfo.qtyOrFlags))
-	byteOrder.PutUint32(target[:], groupID)
-	copy(target[4:], entryInfo.qtyOrFlags)
-	groupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
-	return groupIndex.Put(entryInfo.outpointID[:], target)
+	// serialize the data for writing to db
+	target := make([]byte, 4+4+len(entryInfo.qtyOrFlags))
+	byteOrder.PutUint32(target[:4], groupID)
+	byteOrder.PutUint32(target[4:], parentGroupID)
+	copy(target[8:], entryInfo.qtyOrFlags)
+	outputsIndex := dbTx.Metadata().Bucket(groupOutputIndexKey)
+	log.Debugf("dbPutGroupOutputEntry %s -> %s", hex.EncodeToString(entryInfo.outpointID[:]), hex.EncodeToString(target))
+	return outputsIndex.Put(entryInfo.outpointID[:], target)
 }
 
 // GroupTxEntry is a valid slp token stored in the slp index
@@ -257,10 +274,10 @@ type GroupTxEntry struct {
 // nil will be returned for the both the entry and the error.
 func dbFetchGroupIndexEntry(dbTx database.Tx, outpointID []byte) (*GroupTxEntry, error) {
 	// Load the record from the database and return now if it doesn't exist.
-	GroupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
+	GroupIndex := dbTx.Metadata().Bucket(groupOutputIndexKey)
 	serializedData := GroupIndex.Get(outpointID)
 	if len(serializedData) == 0 {
-		return nil, fmt.Errorf("slp entry does not exist %v", outpointID)
+		return nil, fmt.Errorf("slp v2 entry does not exist %s", hex.EncodeToString(outpointID))
 	}
 
 	// Ensure the serialized data has enough bytes to properly deserialize.
@@ -268,15 +285,15 @@ func dbFetchGroupIndexEntry(dbTx database.Tx, outpointID []byte) (*GroupTxEntry,
 	if len(serializedData) < 10 {
 		return nil, database.Error{
 			ErrorCode: database.ErrCorruption,
-			Description: fmt.Sprintf("corrupt slp index "+
-				"entry for %s", outpointID),
+			Description: fmt.Sprintf("corrupt slp v2 index "+
+				"entry for %s", hex.EncodeToString(outpointID)),
 		}
 	}
 
 	entry := &GroupTxEntry{
 		GroupID:       byteOrder.Uint32(serializedData[0:4]),
 		ParentGroupID: 0,
-		QtyOrFlags:    serializedData[5:],
+		QtyOrFlags:    serializedData[8:],
 	}
 
 	var groupIDBytes []byte
@@ -318,7 +335,7 @@ func dbRemoveGroupIndexEntries(dbTx database.Tx, block *bchutil.Block) error {
 
 	// this method should only be called after a topological sort
 	dbRemoveGroupIndexEntry := func(dbTx database.Tx, txHash *chainhash.Hash) error {
-		GroupIndex := dbTx.Metadata().Bucket(groupTxIndexKey)
+		GroupIndex := dbTx.Metadata().Bucket(groupOutputIndexKey)
 		serializedData := GroupIndex.Get(txHash[:])
 		if len(serializedData) == 0 {
 			return nil
@@ -416,7 +433,7 @@ func (idx *GroupIndex) Migrate(db database.DB, interrupt <-chan struct{}) error 
 //
 // This is part of the Indexer interface.
 func (idx *GroupIndex) Key() []byte {
-	return groupTxIndexKey
+	return groupOutputIndexKey
 }
 
 // Name returns the human-readable name of the index.
@@ -439,7 +456,7 @@ func (idx *GroupIndex) Create(dbTx database.Tx) error {
 	if _, err := meta.CreateBucket(groupMetadataByIDIndexBucketName); err != nil {
 		return err
 	}
-	_, err := meta.CreateBucket(groupTxIndexKey)
+	_, err := meta.CreateBucket(groupOutputIndexKey)
 	return err
 }
 
@@ -460,7 +477,7 @@ func (idx *GroupIndex) ConnectBlock(dbTx database.Tx, block *bchutil.Block, stxo
 
 		log.Infof("group out %v:%s, %s %s", txHash, fmt.Sprint(vout), hex.EncodeToString(groupIDBytes), hex.EncodeToString(qtyOrFlags))
 
-		return dbPutGroupIndexEntry(idx, dbTx, &dbGroupIndexEntry{
+		return dbPutGroupOutputEntry(idx, dbTx, &dbGroupIndexEntry{
 			outpointID: outpointID,
 			groupID:    groupIDBytes,
 			qtyOrFlags: qtyOrFlags,
@@ -520,7 +537,7 @@ func CheckGroupTx(tx *wire.MsgTx, putTxIndexEntry AddGroupTxIndexEntryHandler) (
 
 		// group id is at index 0
 		if len(splitDisassembledScript[0]) < 32*2 {
-			log.Critical("OP_GROUP id is less than 32 bytes!")
+			log.Critical("op_group id is less than 32 bytes!")
 			continue
 		}
 		groupID, err := hex.DecodeString(splitDisassembledScript[0])
@@ -532,7 +549,7 @@ func CheckGroupTx(tx *wire.MsgTx, putTxIndexEntry AddGroupTxIndexEntryHandler) (
 		// group value conforms to length requirement
 		valLen := len(splitDisassembledScript[1])
 		if valLen != 4 && valLen != 8 && valLen != 16 {
-			log.Critical("OP_GROUP value is not 2, 4, or 8 bytes!")
+			log.Critical("op_group value is not 2, 4, or 8 bytes!")
 			continue
 		}
 		groupVal, err := hex.DecodeString(splitDisassembledScript[1])
@@ -543,7 +560,7 @@ func CheckGroupTx(tx *wire.MsgTx, putTxIndexEntry AddGroupTxIndexEntryHandler) (
 
 		// group opcode is at index 3
 		if splitDisassembledScript[2] != "OP_GROUP" {
-			log.Critical("OP_GROUP not detected in output script!")
+			log.Critical("op_group not detected in output script!")
 			continue
 		}
 
@@ -703,5 +720,5 @@ func dropGroupIndexes(db database.DB) error {
 // exists.  Since the address index relies on it, the address index will also be
 // dropped when it exists.
 func DropGroupIndex(db database.DB, interrupt <-chan struct{}) error {
-	return dropIndex(db, groupTxIndexKey, groupTokenIndexName, interrupt)
+	return dropIndex(db, groupOutputIndexKey, groupTokenIndexName, interrupt)
 }

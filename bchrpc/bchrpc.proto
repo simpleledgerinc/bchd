@@ -831,16 +831,22 @@ message SlpToken {
     uint32 decimals = 5;
     SlpAction slp_action = 6;
     SlpTokenType token_type = 7;
+    repeated GroupAuthorityFlag group_authority_flags = 8;
+    repeated GroupFlag group_flags = 9;
 }
 
 enum SlpTokenType {
+    // this will be used with non-slp op_group outputs
     VERSION_NOT_SET = 0;
+
+    // slp v1 types
     V1_FUNGIBLE = 1;
     V1_NFT1_CHILD = 65;
     V1_NFT1_GROUP = 129;
 
-    // OP_GROUP related
-    VX_GROUP = 10;
+    // slp v2 type (op_group related)
+    V2_GROUP = 2;
+    V2_GROUP_NFT = 66;
 }
 
 // SlpTransactionInfo is used inside the Transaction message type.
@@ -925,18 +931,20 @@ enum SlpAction {
     SLP_V1_NFT1_UNIQUE_CHILD_GENESIS = 10;
     SLP_V1_NFT1_UNIQUE_CHILD_SEND = 11;
 
-    // SLP_OUTPUTS will only be used within the SlpTransactionInfo message
-    // if multiple slp actions within the same transaction.
-    SLP_OUTPUTS = 13;
+    // SLP_V2 and SLP_V2_WITH_V1 will be used within the SlpTransactionInfo message
+    // that contains slp v2 outputs.  It is possible to have transactions containing
+    // both slp v1 and v2, so these can be flagged as such using SLP_V2_WITH_V1.
+    SLP_V2 = 13;
+    SLP_V2_WITH_V1 = 14;
 
-    // OP_GROUP related actions
-    SLP_X_GROUP_GENESIS = 14;
-    SLP_X_GROUP_SUBGROUP_GENESIS = 15;
-    SLP_X_GROUP_SEND_OUTPUT = 16;
-    SLP_X_GROUP_MINT_OUTPUT = 17;
-    SLP_X_GROUP_MELT_INPUT = 18;
-    SLP_X_GROUP_RESCRIPT = 19;
-    SLP_X_GROUP_AUTHORITY_OUTPUT = 20;
+
+    // op_group related actions used in SlpToken objects
+    SLP_V2_SEND_OUTPUT = 15;
+    SLP_V2_NFT_SEND_OUTPUT = 16;
+    SLP_V2_AUTHORITY_OUTPUT = 17;
+
+    // SLP_V2_RESCRIPT = 16;
+    // SLP_V2_MELT_INPUT = 17;
 }
 
 // SlpTokenMetadata is used to marshal metadata about a specific TokenID
@@ -948,8 +956,8 @@ message SlpTokenMetadata {
         V1NFT1Group v1_nft1_group = 4;
         V1NFT1Child v1_nft1_child = 5;
 
-        // OP_GROUP type of metadata
-        VxGroup vx_group = 6;
+        // op_group type of metadata
+        V2GroupSpec v2_group_spec = 6;
     }
 
     // TokenMetadataV1Fungible is used to marshal metadata specific to Type 1 token IDs
@@ -983,8 +991,8 @@ message SlpTokenMetadata {
         bytes group_id = 5;
     }
 
-    // VxGroup is used to marshal metadata specific to OP_GROUP version of SLP 
-    message VxGroup {
+    // V2GroupSpec is used to marshal metadata specific to op_group version of SLP 
+    message V2GroupSpec {
         string token_ticker = 1;
         string token_name = 2;
         string token_document_url = 3;
@@ -993,10 +1001,11 @@ message SlpTokenMetadata {
         bytes parent_group_id = 6;
         repeated GroupFlag group_flags = 7;
 
-        // repeated AuthorityFlag authorities_outstanding = 4;
-        // bytes total_minted = 5;
-        // bytes total_melted = 6;
-        // int subgroups_count = 7;
+        // TODO...
+        // repeated GroupAuthorityFlag authorities_outstanding = 4;
+        // bytes total_minted_confirmed = 5;
+        // bytes total_melted_confirmed = 6;
+        // int subgroups_count_confirmed = 7;
     }
 }
 
@@ -1011,7 +1020,7 @@ message SlpRequiredBurn {
     }
 }
 
-// OP_GROUP related
+// op_group related flags
 
 // GroupFlags represents the 2-byte group flags embedded as part of the 32-byte group id.
 // The enum values are not the protocol flag values.
@@ -1020,9 +1029,9 @@ enum GroupFlag {
     HOLDS_BCH = 1;
 }
 
-// AuthorityFlags represents the authority flags in an authority output
+// GroupAuthorityFlags represents the authority flags in an authority output
 // The enum values are not the protocol flag values.
-enum AuthorityFlag {
+enum GroupAuthorityFlag {
     MINT = 0;
     MELT = 1;
     BATON = 2;

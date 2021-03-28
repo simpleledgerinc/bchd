@@ -976,7 +976,7 @@
       },
       "title": "TokenMetadataV1NFT1Group is used to marshal metadata specific to NFT1 Group token IDs"
     },
-    "SlpTokenMetadataVxGroup": {
+    "SlpTokenMetadataV2GroupSpec": {
       "type": "object",
       "properties": {
         "token_ticker": {
@@ -1007,7 +1007,7 @@
           }
         }
       },
-      "title": "VxGroup is used to marshal metadata specific to OP_GROUP version of SLP"
+      "title": "V2GroupSpec is used to marshal metadata specific to op_group version of SLP"
     },
     "SlpTransactionInfoBurnFlags": {
       "type": "string",
@@ -1852,6 +1852,18 @@
         }
       }
     },
+    "pbGroupAuthorityFlag": {
+      "type": "string",
+      "enum": [
+        "MINT",
+        "MELT",
+        "BATON",
+        "RESCRIPT",
+        "SUBGROUP"
+      ],
+      "default": "MINT",
+      "description": "GroupAuthorityFlags represents the authority flags in an authority output\nThe enum values are not the protocol flag values."
+    },
     "pbGroupFlag": {
       "type": "string",
       "enum": [
@@ -1909,17 +1921,14 @@
         "SLP_V1_NFT1_GROUP_SEND",
         "SLP_V1_NFT1_UNIQUE_CHILD_GENESIS",
         "SLP_V1_NFT1_UNIQUE_CHILD_SEND",
-        "SLP_OUTPUTS",
-        "SLP_X_GROUP_GENESIS",
-        "SLP_X_GROUP_SUBGROUP_GENESIS",
-        "SLP_X_GROUP_SEND_OUTPUT",
-        "SLP_X_GROUP_MINT_OUTPUT",
-        "SLP_X_GROUP_MELT_INPUT",
-        "SLP_X_GROUP_RESCRIPT",
-        "SLP_X_GROUP_AUTHORITY_OUTPUT"
+        "SLP_V2",
+        "SLP_V2_WITH_V1",
+        "SLP_V2_SEND_OUTPUT",
+        "SLP_V2_NFT_SEND_OUTPUT",
+        "SLP_V2_AUTHORITY_OUTPUT"
       ],
       "default": "NON_SLP",
-      "description": "SlpAction is used to allow clients to identify the type of slp transaction from this single field.\n\nNOTE: All enum types except for \"NON_SLP\" may be annotated with one or more BurnFlags.\n\n - SLP_OUTPUTS: SLP_OUTPUTS will only be used within the SlpTransactionInfo message\nif multiple slp actions within the same transaction.\n - SLP_X_GROUP_GENESIS: OP_GROUP related actions"
+      "description": "SlpAction is used to allow clients to identify the type of slp transaction from this single field.\n\nNOTE: All enum types except for \"NON_SLP\" may be annotated with one or more BurnFlags.\n\n - SLP_V2: SLP_V2 and SLP_V2_WITH_V1 will be used within the SlpTransactionInfo message\nthat contains slp v2 outputs.  It is possible to have transactions containing\nboth slp v1 and v2, so these can be flagged as such using SLP_V2_WITH_V1.\n - SLP_V2_SEND_OUTPUT: op_group related actions used in SlpToken objects"
     },
     "pbSlpRequiredBurn": {
       "type": "object",
@@ -1971,6 +1980,18 @@
         },
         "token_type": {
           "$ref": "#/definitions/pbSlpTokenType"
+        },
+        "group_authority_flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/pbGroupAuthorityFlag"
+          }
+        },
+        "group_flags": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/pbGroupFlag"
+          }
         }
       },
       "description": "WARNING: Some languages (e.g., JavaScript) may not properly handle the 'uint64'\nfor large amounts. For this reason, an annotation has been added for JS to\nreturn a string for the amount field instead of casting uint64 to the JS 'number'\ntype. Other languages may require similar treatment.",
@@ -1995,9 +2016,9 @@
         "v1_nft1_child": {
           "$ref": "#/definitions/SlpTokenMetadataV1NFT1Child"
         },
-        "vx_group": {
-          "$ref": "#/definitions/SlpTokenMetadataVxGroup",
-          "title": "OP_GROUP type of metadata"
+        "v2_group_spec": {
+          "$ref": "#/definitions/SlpTokenMetadataV2GroupSpec",
+          "title": "op_group type of metadata"
         }
       },
       "title": "SlpTokenMetadata is used to marshal metadata about a specific TokenID"
@@ -2009,10 +2030,11 @@
         "V1_FUNGIBLE",
         "V1_NFT1_CHILD",
         "V1_NFT1_GROUP",
-        "VX_GROUP"
+        "V2_GROUP",
+        "V2_GROUP_NFT"
       ],
       "default": "VERSION_NOT_SET",
-      "title": "- VX_GROUP: OP_GROUP related"
+      "title": "- VERSION_NOT_SET: this will be used with non-slp op_group outputs\n - V1_FUNGIBLE: slp v1 types\n - V2_GROUP: slp v2 type (op_group related)"
     },
     "pbSlpTransactionInfo": {
       "type": "object",

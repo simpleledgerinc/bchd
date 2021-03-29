@@ -6,6 +6,7 @@ package netsync
 
 import (
 	"container/list"
+	"fmt"
 	"math/rand"
 	"net"
 	"sort"
@@ -215,16 +216,20 @@ func (sps *syncPeerState) updateNetwork(syncPeer *peerpkg.Peer) {
 // chain is in sync, the SyncManager handles incoming block and header
 // notifications and relays announcements of new blocks to peers.
 type SyncManager struct {
-	peerNotifier   PeerNotifier
-	started        int32
-	shutdown       int32
-	chain          *blockchain.BlockChain
-	txMemPool      *mempool.TxPool
-	chainParams    *chaincfg.Params
-	progressLogger *blockProgressLogger
-	msgChan        chan interface{}
-	wg             sync.WaitGroup
-	quit           chan struct{}
+	peerNotifier       PeerNotifier
+	started            int32
+	shutdown           int32
+	chain              *blockchain.BlockChain
+	txMemPool          *mempool.TxPool
+	chainParams        *chaincfg.Params
+	progressLogger     *blockProgressLogger
+	msgChan            chan interface{}
+	msgChanDist        map[string]int
+	msgChanCurrentItem string
+	msgChanTicker      int
+	msgChanStatLock    sync.Mutex
+	wg                 sync.WaitGroup
+	quit               chan struct{}
 
 	// These fields should only be accessed from the blockHandler thread.
 	rejectedTxns    map[chainhash.Hash]struct{}
@@ -1494,6 +1499,10 @@ out:
 		case <-ticker.C:
 			sm.handleCheckSyncPeer()
 		case m := <-sm.msgChan:
+
+			// some temporary logging of channel use stats
+			sm.printMsgChanStat(m)
+
 			switch msg := m.(type) {
 			case *newPeerMsg:
 				sm.handleNewPeerMsg(msg.peer)
@@ -1675,6 +1684,116 @@ func (sm *SyncManager) handleBlockchainNotification(notification *blockchain.Not
 	}
 }
 
+func (sm *SyncManager) writeToMsgChan(msg interface{}) {
+
+	var itemType string
+	switch msg.(type) {
+	case *newPeerMsg:
+		itemType = "*newPeerMsg"
+	case *txMsg:
+		itemType = "*txMsg"
+	case *blockMsg:
+		itemType = "*blockMsg"
+	case *blockErrorMsg:
+		itemType = "*blockErrorMsg"
+	case *invMsg:
+		itemType = "*invMsg"
+	case *headersMsg:
+		itemType = "*headersMsg"
+	case *donePeerMsg:
+		itemType = "*donePeerMsg"
+	case getSyncPeerMsg:
+		itemType = "getSyncPeerMsg"
+	case processBlockMsg:
+		itemType = "processBlockMsg"
+	case isCurrentMsg:
+		itemType = "isCurrentMsg"
+	case pauseMsg:
+		itemType = "pauseMsg"
+	default:
+		itemType = "unknown"
+	}
+
+	sm.msgChan <- msg
+
+	// add to the message distribution stat
+	sm.msgChanStatLock.Lock()
+	defer sm.msgChanStatLock.Unlock()
+
+	if _, ok := sm.msgChanDist[itemType]; !ok {
+		sm.msgChanDist[itemType] = 0
+	}
+	sm.msgChanDist[itemType]++
+	sm.msgChanTicker++
+}
+
+func (sm *SyncManager) printMsgChanStat(m interface{}) {
+
+	switch m.(type) {
+	case *newPeerMsg:
+		sm.msgChanCurrentItem = "*newPeerMsg"
+	case *txMsg:
+		sm.msgChanCurrentItem = "*txMsg"
+	case *blockMsg:
+		sm.msgChanCurrentItem = "*blockMsg"
+	case *blockErrorMsg:
+		sm.msgChanCurrentItem = "*blockErrorMsg"
+	case *invMsg:
+		sm.msgChanCurrentItem = "*invMsg"
+	case *headersMsg:
+		sm.msgChanCurrentItem = "*headersMsg"
+	case *donePeerMsg:
+		sm.msgChanCurrentItem = "*donePeerMsg"
+	case getSyncPeerMsg:
+		sm.msgChanCurrentItem = "getSyncPeerMsg"
+	case processBlockMsg:
+		sm.msgChanCurrentItem = "processBlockMsg"
+	case isCurrentMsg:
+		sm.msgChanCurrentItem = "isCurrentMsg"
+	case pauseMsg:
+		sm.msgChanCurrentItem = "pauseMsg"
+	default:
+		sm.msgChanCurrentItem = "unknown"
+	}
+
+	sm.msgChanStatLock.Lock()
+	defer sm.msgChanStatLock.Unlock()
+
+	// remove from the distribution stat
+	sm.msgChanDist[sm.msgChanCurrentItem]--
+}
+
+func (sm *SyncManager) printMsgChannelStat() {
+	sm.msgChanStatLock.Lock()
+	defer sm.msgChanStatLock.Unlock()
+
+	l := len(sm.msgChan)
+	s := cap(sm.msgChan)
+
+	log.Infof("current blockHandler item type %s (size/cap %s/%s)",
+		sm.msgChanCurrentItem, fmt.Sprint(l), fmt.Sprint(s))
+	for t, c := range sm.msgChanDist {
+		log.Infof("%s - %s", t, fmt.Sprint(c))
+	}
+}
+
+// prints msgChan stats periodically
+func (sm *SyncManager) periodicMsgChannelStat() {
+	timer := time.NewTimer(60 * time.Second)
+	defer timer.Stop()
+
+out:
+	for {
+		select {
+		case <-timer.C:
+			sm.printMsgChannelStat()
+			timer.Reset(60 * time.Second)
+		case <-sm.quit:
+			break out
+		}
+	}
+}
+
 // NewPeer informs the sync manager of a newly active peer.
 func (sm *SyncManager) NewPeer(peer *peerpkg.Peer, done chan struct{}) {
 	// Ignore peer if not connected.
@@ -1695,7 +1814,7 @@ func (sm *SyncManager) NewPeer(peer *peerpkg.Peer, done chan struct{}) {
 	log.Info("NewPeer - no shutdown")
 
 	log.Info("NewPeer - add new peer msg to sm.msgChan")
-	sm.msgChan <- &newPeerMsg{peer: peer, reply: done}
+	sm.writeToMsgChan(&newPeerMsg{peer: peer, reply: done})
 }
 
 // QueueTx adds the passed transaction message and peer to the block handling
@@ -1708,7 +1827,7 @@ func (sm *SyncManager) QueueTx(tx *bchutil.Tx, peer *peerpkg.Peer, done chan str
 		return
 	}
 
-	sm.msgChan <- &txMsg{tx: tx, peer: peer, reply: done}
+	sm.writeToMsgChan(&txMsg{tx: tx, peer: peer, reply: done})
 }
 
 // QueueBlock adds the passed block message and peer to the block handling
@@ -1721,7 +1840,7 @@ func (sm *SyncManager) QueueBlock(block *bchutil.Block, peer *peerpkg.Peer, done
 		return
 	}
 
-	sm.msgChan <- &blockMsg{block: block, peer: peer, reply: done}
+	sm.writeToMsgChan(&blockMsg{block: block, peer: peer, reply: done})
 }
 
 // QueueBlockError adds the passed block message and peer to the block handling
@@ -1730,7 +1849,7 @@ func (sm *SyncManager) QueueBlockError(hash *chainhash.Hash, peer *peerpkg.Peer)
 	if atomic.LoadInt32(&sm.shutdown) != 0 {
 		return
 	}
-	sm.msgChan <- &blockErrorMsg{hash: hash, peer: peer}
+	sm.writeToMsgChan(&blockErrorMsg{hash: hash, peer: peer})
 }
 
 // QueueInv adds the passed inv message and peer to the block handling queue.
@@ -1741,7 +1860,7 @@ func (sm *SyncManager) QueueInv(inv *wire.MsgInv, peer *peerpkg.Peer) {
 		return
 	}
 
-	sm.msgChan <- &invMsg{inv: inv, peer: peer}
+	sm.writeToMsgChan(&invMsg{inv: inv, peer: peer})
 }
 
 // QueueHeaders adds the passed headers message and peer to the block handling
@@ -1753,7 +1872,7 @@ func (sm *SyncManager) QueueHeaders(headers *wire.MsgHeaders, peer *peerpkg.Peer
 		return
 	}
 
-	sm.msgChan <- &headersMsg{headers: headers, peer: peer}
+	sm.writeToMsgChan(&headersMsg{headers: headers, peer: peer})
 }
 
 // DonePeer informs the blockmanager that a peer has disconnected.
@@ -1764,7 +1883,7 @@ func (sm *SyncManager) DonePeer(peer *peerpkg.Peer, done chan struct{}) {
 		return
 	}
 
-	sm.msgChan <- &donePeerMsg{peer: peer, reply: done}
+	sm.writeToMsgChan(&donePeerMsg{peer: peer, reply: done})
 }
 
 // Start begins the core block handler which processes block and inv messages.
@@ -1776,6 +1895,8 @@ func (sm *SyncManager) Start() {
 
 	log.Trace("Starting sync manager")
 	sm.wg.Add(1)
+
+	go sm.periodicMsgChannelStat()
 	go sm.blockHandler()
 }
 
@@ -1797,7 +1918,7 @@ func (sm *SyncManager) Stop() error {
 // SyncPeerID returns the ID of the current sync peer, or 0 if there is none.
 func (sm *SyncManager) SyncPeerID() int32 {
 	reply := make(chan int32)
-	sm.msgChan <- getSyncPeerMsg{reply: reply}
+	sm.writeToMsgChan(getSyncPeerMsg{reply: reply})
 	return <-reply
 }
 
@@ -1805,7 +1926,7 @@ func (sm *SyncManager) SyncPeerID() int32 {
 // chain.
 func (sm *SyncManager) ProcessBlock(block *bchutil.Block, flags blockchain.BehaviorFlags) (bool, error) {
 	reply := make(chan processBlockResponse)
-	sm.msgChan <- processBlockMsg{block: block, flags: flags, reply: reply}
+	sm.writeToMsgChan(processBlockMsg{block: block, flags: flags, reply: reply})
 	response := <-reply
 	return response.isOrphan, response.err
 }
@@ -1814,7 +1935,7 @@ func (sm *SyncManager) ProcessBlock(block *bchutil.Block, flags blockchain.Behav
 // the connected peers.
 func (sm *SyncManager) IsCurrent() bool {
 	reply := make(chan bool)
-	sm.msgChan <- isCurrentMsg{reply: reply}
+	sm.writeToMsgChan(isCurrentMsg{reply: reply})
 	return <-reply
 }
 
@@ -1824,7 +1945,7 @@ func (sm *SyncManager) IsCurrent() bool {
 // message sender should avoid pausing the sync manager for long durations.
 func (sm *SyncManager) Pause() chan<- struct{} {
 	c := make(chan struct{})
-	sm.msgChan <- pauseMsg{c}
+	sm.writeToMsgChan(pauseMsg{c})
 	return c
 }
 
@@ -1842,6 +1963,10 @@ func New(config *Config) (*SyncManager, error) {
 		peerStates:              make(map[*peerpkg.Peer]*peerSyncState),
 		progressLogger:          newBlockProgressLogger("Processed", log),
 		msgChan:                 make(chan interface{}, config.MaxPeers*3),
+		msgChanDist:             make(map[string]int),
+		msgChanCurrentItem:      "none",
+		msgChanTicker:           0,
+		msgChanStatLock:         sync.Mutex{},
 		headerList:              list.New(),
 		quit:                    make(chan struct{}),
 		feeEstimator:            config.FeeEstimator,

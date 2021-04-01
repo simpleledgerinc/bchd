@@ -427,7 +427,7 @@ var MainNetParams = Params{
 
 // nexParams defines the network parameters for the nextchain experimental blockchain
 var NexParams = Params{
-	Name:        "nex",
+	Name:        "nextest",
 	Net:         wire.NexNet,
 	DefaultPort: "7228",
 	DNSSeeds: []DNSSeed{

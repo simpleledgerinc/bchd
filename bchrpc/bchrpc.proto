@@ -761,7 +761,11 @@ message Transaction {
     // Hash of the block the transaction was recorded in, little-endian.
     bytes block_hash = 12;
 
+    // slp v1 type transaction info
     SlpTransactionInfo slp_transaction_info = 13;
+
+    // slp v2 type transaction info
+    repeated SlpV2TransactionInfo slp_v2_transaction_info = 14;
 }
 
 message MempoolTransaction {
@@ -826,13 +830,14 @@ message TransactionFilter {
 message SlpToken {
     bytes token_id = 1;
     uint64 amount = 2 [jstype = JS_STRING];
-    bool is_mint_baton = 3;
+    bool is_mint_baton = 3; // slp v1 specific
     string address = 4;
     uint32 decimals = 5;
     SlpAction slp_action = 6;
     SlpTokenType token_type = 7;
-    repeated GroupAuthorityFlag group_authority_flags = 8;
-    repeated GroupFlag group_flags = 9;
+    bool is_v2_authority = 8; // slp v2 specific
+    uint64 v2_authority_value = 9 [jstype = JS_STRING]; // slp v2 specific
+    repeated V2AuthorityFlag v2_authority_flags = 10; // slp v2 specific
 }
 
 enum SlpTokenType {
@@ -844,12 +849,13 @@ enum SlpTokenType {
     V1_NFT1_CHILD = 65;
     V1_NFT1_GROUP = 129;
 
-    // slp v2 type (op_group related)
-    V2_GROUP = 2;
-    V2_GROUP_NFT = 66;
+    // slp v2 type (only indicates existance of OP_RETURN genesis metadata)
+    V2_FUNGIBLE = 2;
+    V2_NFT_SUBGROUP = 66;
+    V2_FUNGIBLE_SUBGROUP = 130;
 }
 
-// SlpTransactionInfo is used inside the Transaction message type.
+// SlpTransactionInfo is used inside the Transaction message type for slp v1.
 message SlpTransactionInfo {
     SlpAction slp_action = 1;
     enum ValidityJudgement {
@@ -913,6 +919,46 @@ message SlpV1Nft1ChildSendMetadata {
     bytes group_token_id = 1;
 }
 
+// SlpV2TransactionInfo is used inside the Transaction message type.
+message SlpV2TransactionInfo {
+    SlpAction slp_action = 1;
+    string parse_error = 2;
+    bytes token_id = 3;
+    oneof tx_metadata {
+        SlpV2GenesisMetadata v2_genesis = 4;
+        SlpV2NftSubgroupGenesisMetadata v2_nft_subgroup_genesis = 5;
+        SlpV2FungibleSubgroupGenesisMetadata v2_fungible_subgroup_genesis = 6;
+    }
+}
+
+// SlpV2GenesisMetadata is used to marshal type 2 GENESIS OP_RETURN scriptPubKey
+message SlpV2GenesisMetadata {
+    bytes name = 1;
+    bytes ticker = 2;
+    bytes document_url = 3;
+    bytes document_hash = 4;
+    uint32 decimals = 5;
+}
+
+// SlpV2NftSubgroupGenesisMetadata is used to marshal a fungible nft GENESIS OP_RETURN scriptPubKey
+message SlpV2NftSubgroupGenesisMetadata {
+    bytes name = 1;
+    bytes ticker = 2;
+    bytes document_url = 3;
+    bytes document_hash = 4;
+    bytes group_token_id = 5;
+}
+
+// SlpV2FungibleSubgroupGenesisMetadata is used to marshal a fugible subgroup GENESIS OP_RETURN scriptPubKey
+message SlpV2FungibleSubgroupGenesisMetadata {
+    bytes name = 1;
+    bytes ticker = 2;
+    bytes document_url = 3;
+    bytes document_hash = 4;
+    uint32 decimals = 5;
+    bytes group_token_id = 6;
+}
+
 // SlpAction is used to allow clients to identify the type of slp transaction from this single field.
 //
 // NOTE: All enum types except for "NON_SLP" may be annotated with one or more BurnFlags.
@@ -931,17 +977,16 @@ enum SlpAction {
     SLP_V1_NFT1_UNIQUE_CHILD_GENESIS = 10;
     SLP_V1_NFT1_UNIQUE_CHILD_SEND = 11;
 
-    // SLP_V2 and SLP_V2_WITH_V1 will be used within the SlpTransactionInfo message
-    // that contains slp v2 outputs.  It is possible to have transactions containing
-    // both slp v1 and v2, so these can be flagged as such using SLP_V2_WITH_V1.
-    SLP_V2 = 13;
-    SLP_V2_WITH_V1 = 14;
-
-
     // op_group related actions used in SlpToken objects
-    SLP_V2_SEND_OUTPUT = 15;
-    SLP_V2_NFT_SEND_OUTPUT = 16;
-    SLP_V2_AUTHORITY_OUTPUT = 17;
+    SLP_V2_AUTHORITY = 12;
+    SLP_V2_GENESIS = 13;
+    SLP_V2_MINT = 14;
+    SLP_V2_SEND = 15;
+    SLP_V2_NFT_SUBGROUP_GENESIS = 16;
+    SLP_V2_NFT_SUBGROUP_SEND = 17;
+    SLP_V2_FUNGIBLE_SUBGROUP_GENESIS = 18;
+    SLP_V2_FUNGIBLE_SUBGROUP_MINT = 19;
+    SLP_V2_FUNGIBLE_SUBGROUP_SEND = 20;
 
     // SLP_V2_RESCRIPT = 16;
     // SLP_V2_MELT_INPUT = 17;
@@ -957,7 +1002,9 @@ message SlpTokenMetadata {
         V1NFT1Child v1_nft1_child = 5;
 
         // op_group type of metadata
-        V2GroupSpec v2_group_spec = 6;
+        V2Fungible v2_fungible = 6;
+        V2NFTSubgroup   v2_nft_subgroup = 7;
+        V2FungibleSubgroup v2_fungible_subgroup = 8;
     }
 
     // TokenMetadataV1Fungible is used to marshal metadata specific to Type 1 token IDs
@@ -991,21 +1038,39 @@ message SlpTokenMetadata {
         bytes group_id = 5;
     }
 
-    // V2GroupSpec is used to marshal metadata specific to op_group version of SLP 
-    message V2GroupSpec {
+    // V2Fungible is used to marshal metadata specific to op_group version of slp 
+    message V2Fungible {
+        string token_ticker = 1;
+        string token_name = 2;
+        string token_document_url = 3;
+        bytes token_document_hash = 4;
+        uint32 decimals = 5;
+        repeated V2GroupFlag group_flags = 6;
+
+        // TODO...
+        // repeated V2AuthorityFlag authorities_outstanding = 4;
+        // bytes total_minted_confirmed = 5;
+        // bytes total_melted_confirmed = 6;
+        // int subgroups_count_confirmed = 7;
+    }
+
+    // V2NftSubgroup is used to marshal metadata specific to slp v2 nft subgroup token ids
+    message V2NFTSubgroup {
+        string token_ticker = 1;
+        string token_name = 2;
+        string token_document_url = 3;
+        bytes token_document_hash = 4;
+        bytes group_id = 5;
+    }
+
+    // V2FungibleSubgroup is used to marshal metadata specific to v2 fungible subgroup token ids
+    message V2FungibleSubgroup {
         string token_ticker = 1;
         string token_name = 2;
         string token_document_url = 3;
         bytes token_document_hash = 4;
         uint32 decimals = 5;
         bytes parent_group_id = 6;
-        repeated GroupFlag group_flags = 7;
-
-        // TODO...
-        // repeated GroupAuthorityFlag authorities_outstanding = 4;
-        // bytes total_minted_confirmed = 5;
-        // bytes total_melted_confirmed = 6;
-        // int subgroups_count_confirmed = 7;
     }
 }
 
@@ -1020,18 +1085,16 @@ message SlpRequiredBurn {
     }
 }
 
-// op_group related flags
-
-// GroupFlags represents the 2-byte group flags embedded as part of the 32-byte group id.
+// V2GroupFlag represents the 2-byte group flags embedded as part of the 32-byte group id.
 // The enum values are not the protocol flag values.
-enum GroupFlag {
+enum V2GroupFlag {
     COVENANT = 0;
     HOLDS_BCH = 1;
 }
 
-// GroupAuthorityFlags represents the authority flags in an authority output
+// V2AuthorityFlag represents the authority flags in an authority output
 // The enum values are not the protocol flag values.
-enum GroupAuthorityFlag {
+enum V2AuthorityFlag {
     MINT = 0;
     MELT = 1;
     BATON = 2;
